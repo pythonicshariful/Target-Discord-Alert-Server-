@@ -1,0 +1,8 @@
+# Local-only files — never pushed to GitHub
+server/config.json
+server/alerts.db
+server/server.log
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
