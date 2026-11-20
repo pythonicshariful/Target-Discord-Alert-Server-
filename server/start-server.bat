@@ -22,6 +22,10 @@ if errorlevel 1 (
 )
 echo [v5] Starting server on http://127.0.0.1:5000 ...
 echo [v5] Keep this window open. Press Ctrl+C to stop.
+echo [v5] The dashboard will open in your browser at http://127.0.0.1:5000/
+echo [v5] Use the dashboard to add products and change settings - no file editing needed.
+REM Open the dashboard a few seconds after the server starts.
+start "" cmd /c "timeout /t 4 /nobreak >nul & start http://127.0.0.1:5000/"
 python server.py
 if errorlevel 1 (
   echo.

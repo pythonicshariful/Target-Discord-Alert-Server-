@@ -16,7 +16,7 @@
 // ==/UserScript==
 
 /*
- * Target Discord Receiver v5 — Piece 2 of Auto-Buy v5 (order FO31C2E00C185)
+ * Target Discord Receiver v5 — Piece 2 of Auto-Buy v5
  *
  * HOW IT WORKS
  *   1. The buyer keeps Discord open in a Chrome tab on the Restockd

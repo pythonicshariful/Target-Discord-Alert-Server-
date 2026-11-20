@@ -1,7 +1,9 @@
 # TESTS.md — Auto-Buy v5 test record
 
 **Date:** 2026-11-20 (re-verified after the 2026-11-20 token sanitization
-for the public repo push: server tests 12/12, T6 9/9, T7 5/5 — all PASS)
+for the public repo push: server tests 12/12, T6 9/9, T7 5/5 — all PASS;
+re-verified again after the 2026-11-20 dashboard UI was added: server
+tests incl. new T11 UI checks 23/23, T6 9/9, T7 5/5 — all PASS)
 **Rule followed:** no test is marked passed unless it was actually run.
 Tests that need the live Discord channel, a real challenge, or an
 overnight soak are marked NOT RUN, not passed.
@@ -49,6 +51,7 @@ watched product at its real price.
 | T6 | Simulated alert for 1011407490 while the product page is OOS (main button disabled, "Find alternative" button enabled): script wakes, claims, verifies (Redsky returned PerimeterX-blocked from this VM, as expected), finds no usable button, buys nothing, marks the alert `failed: stock_check_blocked`, returns to IDLE. Zero clicks — the alternative button was never touched. `findATCButton()` returns null on the OOS page AND returns the enabled exact-TCIN button in the positive control. Target requests happened only in the one ARMED verification (2 Redsky calls, none while IDLE). | PASS (9/9 checks) |
 | T7 | Pending alert for the OTHER watched TCIN (1010892070) while the tab is on 1011407490: script stays IDLE, zero clicks, zero Target requests, the other alert stays pending (not stolen). | PASS (5/5 checks) |
 | T9 | Server stopped; Receiver fed a realistic Restockd embed in a fake Discord DOM: it parses the alert (title/price/link), retries the POST 3×, keeps the alert in its retry queue, panel shows 🔴 OFFLINE, zero Target requests. | PASS (5/5 checks) |
+| T11 | Dashboard UI (`GET /` + `/api/config`, added 2026-11-20 so a non-technical user never edits a file): page loads with a per-start UI token and the Add-product form; wrong UI token → 401; add product works, duplicate TCIN → 409, non-numeric TCIN → 400; settings update + restore works; remove product works and `/status` is back to the original two products afterwards. Token-change via the dashboard is NOT covered by automated tests (it would break the running test server's auth) — verify it manually once. | PASS (11/11 checks) |
 
 ### NOT RUN (need live conditions — not claimed as passed)
 

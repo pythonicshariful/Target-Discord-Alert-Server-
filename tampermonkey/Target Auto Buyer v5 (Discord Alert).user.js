@@ -19,7 +19,7 @@
 // ==/UserScript==
 
 /*
- * Target Auto Buyer v5 — Piece 3 of Auto-Buy v5 (order FO31C2E00C185)
+ * Target Auto Buyer v5 — Piece 3 of Auto-Buy v5
  *
  * TWO MODES
  *   IDLE  — polls the LOCAL server (GET /next) every ~750ms. No Redsky

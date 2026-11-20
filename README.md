@@ -1,7 +1,7 @@
 # Target-Discord-Alert-Server-
 
 Target Auto-Buy v5 — a Discord-alert-driven auto-purchase system for
-Target.com, built for Fiverr order FO31C2E00C185 ($300, williamesco).
+Target.com.
 
 **Version:** 5.0.0 — 2026-11-20
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
@@ -43,23 +43,38 @@ and is deliberately NOT watched.
 1. Install Python 3.11 or newer from python.org. During install, tick
    **"Add python.exe to PATH"**.
 2. Copy this whole folder somewhere, e.g. `C:\TargetBot-v5\`.
-3. **Set your own secret token (once, before the first run):** copy
-   `server\config.example.json` to `server\config.json`, open it, and
-   replace the `secret_token` value with a long random string of your
-   own (e.g. 32 random letters/digits). Then set the **same** string in
-   both Tampermonkey scripts: Tampermonkey dashboard > script >
-   Settings > `v5_token`. The three places must match, or the server
-   rejects the scripts (401). Never post `config.json` anywhere — it
-   is your private token, and it is gitignored in this repo for that
-   reason. The scripts ship with a `CHANGE-ME-...` placeholder on
-   purpose; the server refuses to start with it.
-4. Double-click `server\start-server.bat`. The first run installs the
+3. Double-click `server\start-server.bat`. The first run installs the
    dependencies (FastAPI + uvicorn). A black window opens — **keep it
-   open** while the bot runs. It should say the server is starting on
-   `http://127.0.0.1:5000`.
-5. Check it works: open `http://127.0.0.1:5000/health` in Chrome — you
-   should see `{"ok":true}`. Open `http://127.0.0.1:5000/status` — you
-   should see the two watched products.
+   open** while the bot runs — and the **dashboard opens in your
+   browser** at `http://127.0.0.1:5000/`. (First run only: the server
+   creates `server\config.json` for you with a fresh random token.
+   You never have to edit a file.)
+4. **Set the same token in the two Tampermonkey scripts (once):** in
+   the dashboard, go to the **Secret token** section, click **Show**
+   then **Copy**. Then in Chrome: Tampermonkey dashboard > each script
+   > Settings tab > find `v5_token` > paste the token > Save. Do this
+   for **both** scripts. The three places must match, or the server
+   rejects the scripts. Never post the token anywhere.
+5. Check it works: in the dashboard you should see **Running** and the
+   two watched products. (Or open `http://127.0.0.1:5000/health` — you
+   should see `{"ok":true}`.)
+
+### Step 1b — Manage products in the dashboard (no file editing)
+
+Everything about **which products the bot buys** is done in the
+dashboard at `http://127.0.0.1:5000/`:
+
+- **Add a product:** type its name, its TCIN (numbers only — find it
+  on target.com: open the product page, the TCIN is the number after
+  `/A-` in the address), and the max price you will pay. Click **Add
+  product**. The bot buys only listed products, one item each, at or
+  under the max price.
+- **Remove a product:** click **Remove** next to it. The bot stops
+  buying it immediately.
+- **Settings:** change how long a repeat alert is ignored, and how
+  long a waiting alert is kept.
+- **Recent alerts:** the dashboard lists every alert and what happened
+  to it (`queued`, `ignored`, `claimed`, `done`, `failed`).
 
 ### Step 2 — Tampermonkey scripts (once, per Chrome profile)
 

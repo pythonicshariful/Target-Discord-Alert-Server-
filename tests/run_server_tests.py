@@ -122,6 +122,75 @@ s, r = call("POST", "/ack", {"token": TOKEN, "alert_id": t1_id, "status": "faile
 check("ack: claimed -> failed",
       s == 200 and r.get("status") == "failed", f"HTTP {s} {r}")
 
+# --- T11: dashboard UI (GET / page + /api/config) ---
+# The dashboard page carries a per-start UI token; extract it from the
+# HTML exactly as a browser would, then use it for the config calls.
+import re
+import urllib.request as _urlreq
+try:
+    with _urlreq.urlopen(BASE + "/", timeout=10) as resp:
+        html = resp.read().decode()
+        m = re.search(r'const UI_TOKEN = "([^"]+)"', html)
+        ui_token = m.group(1) if m else ""
+    check("T11 dashboard page loads with UI token", bool(ui_token), f"token found: {bool(ui_token)}")
+    check("T11 dashboard page has Add product form",
+          "Add a product" in html and "Watched products" in html)
+except Exception as e:  # noqa: BLE001 - test harness reports it as a failure
+    ui_token = ""
+    check("T11 dashboard page loads with UI token", False, str(e))
+
+def ui_call(method, path, body=None):
+    req = _urlreq.Request(
+        BASE + path, method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json", "X-UI-Token": ui_token},
+    )
+    try:
+        with _urlreq.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+if ui_token:
+    s, r = ui_call("GET", "/api/config")
+    # wrong-token check: same endpoint with a wrong token must 401
+    req = _urlreq.Request(BASE + "/api/config", headers={"X-UI-Token": "wrong"})
+    try:
+        with _urlreq.urlopen(req, timeout=10) as resp:
+            s_noauth = resp.status
+    except urllib.error.HTTPError as e:
+        s_noauth = e.code
+    check("T11 /api/config with wrong UI token -> 401", s_noauth == 401, f"HTTP {s_noauth}")
+    check("T11 /api/config returns watchlist + token (UI-token protected, dashboard only)",
+          s == 200 and "secret_token" in r and r.get("secret_token") == TOKEN
+          and len(r.get("watchlist", [])) == 2, f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/watchlist",
+                   {"tcin": "1234567890", "name": "Test Product", "max_price": 9.99})
+    check("T11 add product via dashboard", s == 200
+          and any(w["tcin"] == "1234567890" for w in r.get("watchlist", [])),
+          f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/watchlist",
+                   {"tcin": "1234567890", "name": "Test Product", "max_price": 9.99})
+    check("T11 duplicate TCIN rejected (409)", s == 409, f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/watchlist",
+                   {"tcin": "ABC", "name": "Bad", "max_price": 9.99})
+    check("T11 non-numeric TCIN rejected (400)", s == 400, f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/settings",
+                   {"dedupe_window_seconds": 901, "alert_ttl_seconds": 601})
+    check("T11 settings update via dashboard", s == 200
+          and r.get("dedupe_window_seconds") == 901, f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/settings",
+                   {"dedupe_window_seconds": 900, "alert_ttl_seconds": 600})
+    check("T11 settings restored", s == 200
+          and r.get("dedupe_window_seconds") == 900, f"HTTP {s} {r}")
+    s, r = ui_call("DELETE", "/api/config/watchlist/1234567890")
+    check("T11 remove product via dashboard", s == 200
+          and not any(w["tcin"] == "1234567890" for w in r.get("watchlist", [])),
+          f"HTTP {s} {r}")
+    s, r = call("GET", "/status")
+    check("T11 /status watchlist back to the original two",
+          s == 200 and len(r.get("watchlist", [])) == 2, f"HTTP {s} {r}")
+
 print()
 if FAILURES:
     print(f"RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")
