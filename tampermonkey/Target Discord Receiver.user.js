@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Discord Receiver v5 (Restockd Alerts)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.2.0
+// @version      5.2.1
 // @description  Reads Restockd restock alerts in the buyer's own Discord tab (#pokemon-target) and forwards them to the local v5 server (http://127.0.0.1:5000). No self-bot, no user-token login — it only reads what the buyer's own logged-in Discord tab already shows. Filtering (watchlist / price cap / dedupe) happens server-side.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://discord.com/channels/*
@@ -182,8 +182,15 @@
 
     function messageIdOf(node) {
         var id = node.getAttribute('data-list-item-id') || node.id || '';
-        var m = id.match(/(\d{17,20})/);
-        if (m) return 'discord-' + m[1];
+        // data-list-item-id is "chat-messages-<channelId>-<messageId>":
+        // BOTH ids are 17-20 digits, so take the LAST one (the message id).
+        // Taking the first would return the channel id, which is the same
+        // for every message in the channel — after the first alert, all
+        // later alerts in that channel would be silently skipped as
+        // "already processed". (Fixed 2026-11-21 after the first live
+        // test message: it parsed fine, but a second message would not.)
+        var runs = id.match(/\d{17,20}/g) || [];
+        if (runs.length) return 'discord-' + runs[runs.length - 1];
         // Fallback: stable hash of the message text (same message re-rendered
         // by Discord must not be sent twice).
         var txt = (node.textContent || '').slice(0, 400);

@@ -3,7 +3,7 @@
 Target Auto-Buy v5 — a Discord-alert-driven auto-purchase system for
 Target.com.
 
-**Version:** 5.2.0 — 2026-11-21
+**Version:** 5.2.1 — 2026-11-21
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 
@@ -175,6 +175,35 @@ You do not need to wait for a real restock to prove the chain works:
 5. This proves the Discord → server → buyer chain. It does NOT prove
    Restockd's real alert delay or real embed quirks — one real alert is
    still needed later to confirm the real format parses.
+
+### If the test message arrives but nothing happens
+
+Check in this order — the Receiver panel (top-right of the Discord tab)
+tells the truth:
+
+1. **Open the PRODUCT page, not the Target homepage.** The Auto-Buy
+   script only runs on product pages (e.g.
+   `https://www.target.com/p/A-1011407490`). On `target.com` itself
+   Tampermonkey correctly says "No script is running" — that is
+   normal, not a bug.
+2. **Discord must be open in a Chrome tab** on the test channel (the
+   desktop app cannot run Tampermonkey scripts). The Receiver panel
+   must be visible top-right; if there is no panel, the script is not
+   running on that tab.
+3. **The server must be running** (`python3 server/server.py` or
+   `start-server.bat`). If the panel says 🔴 OFFLINE, the alert is
+   stuck in the Receiver's retry queue — start the server and it
+   flushes within 30 seconds.
+4. **The token must match.** The token changed in v5.2.0 — after
+   updating, copy the NEW token from the dashboard (Secret token →
+   Show → Copy) into BOTH scripts (`v5_token`). A wrong token makes
+   the server reject every alert (401); the panel shows Failed going
+   up, exactly like the server being down.
+5. **What the panel numbers mean:** Sent = alerts forwarded to the
+   server; Queued by server = the server accepted them; Failed =
+   rejected or unreachable; Retry queue = waiting to try again.
+   If Sent stays 0, the Receiver never parsed the message — send the
+   panel screenshot plus `server/server.log` to Shariful.
 
 ## After a restock — what to send Shariful
 
