@@ -1,13 +1,10 @@
 // ==UserScript==
 // @name         Target Auto Buyer v5 (Discord Alert)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.3.0
-// @description  Watches the local v5 server for Discord restock alerts and buys the alerted product (TCIN-verified, quantity 1). Buy mode comes from the server dashboard: "Selected products" (watchlist + max price) or "Any product" (any product, any price). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
+// @version      5.4.0
+// @description  Watches the local v5 server for Discord restock alerts and buys the alerted product (TCIN-verified, quantity 1). Runs on ANY target.com page — when an alert arrives it opens that product's page itself and starts the purchase. Buy mode comes from the server dashboard: "Selected products" (watchlist + max price) or "Any product" (any product, any price). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
 // @author       Shariful Islam (pythonicshariful)
-// @match        https://www.target.com/p/*
-// @match        https://www.target.com/cart*
-// @match        https://www.target.com/checkout*
-// @match        https://www.target.com/co-*
+// @match        https://www.target.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -22,12 +19,15 @@
  * Target Auto Buyer v5 — Piece 3 of Auto-Buy v5
  *
  * TWO MODES
- *   IDLE  — polls the LOCAL server (GET /next) every ~750ms. No Redsky
- *           calls, no page reloads, no Target requests at all.
- *   ARMED — a Discord alert arrived for this tab's TCIN. Claims the alert
- *           (so a second profile cannot buy the same alert), checks for a
- *           PerimeterX challenge FIRST, verifies stock once, then runs the
- *           exact-product buy flow.
+ *   IDLE  — polls the LOCAL server (GET /next-any) every ~750ms. No
+ *           Redsky calls, no page reloads, no Target requests at all.
+ *           Runs on ANY target.com page (homepage, search, any product
+ *           page) — the tab does not need to be on the alerted product.
+ *   ARMED — a Discord alert arrived. Claims the alert (so a second
+ *           profile cannot buy the same alert), opens the alerted
+ *           product's page if this tab is not already on it, checks for
+ *           a PerimeterX challenge FIRST, verifies stock once, then runs
+ *           the exact-product buy flow.
  *
  * SAFETY RULES (copied from v4.4 into this file — v4.4 is NOT imported
  * or modified; disable v4.4 on any profile where v5 runs, so the two
@@ -230,7 +230,7 @@
             '<button id="v5-btn-sim" style="margin-right:4px;" title="TEST ONLY: posts a test alert for this product to the server">Simulate alert (test)</button>' +
             '<button id="v5-btn-stop">Stop</button></div>' +
             '<pre id="v5-log" style="margin:8px 0 0;max-height:120px;overflow:auto;background:#0b1220;color:#a5f3fc;font-size:11px;padding:6px;border-radius:4px;white-space:pre-wrap;"></pre>' +
-            '<div style="color:#9ca3af;font-size:11px;margin-top:4px;">IDLE = no Target requests at all. A Press &amp; Hold challenge pauses the bot for a MANUAL solve — it is never auto-solved.</div>';
+            '<div style="color:#9ca3af;font-size:11px;margin-top:4px;">IDLE = no Target requests at all. When an alert arrives, this tab opens the product page itself. A Press &amp; Hold challenge pauses the bot for a MANUAL solve — it is never auto-solved.</div>';
         document.body.appendChild(div);
         panelEls.mode = div.querySelector('#v5-mode');
         panelEls.server = div.querySelector('#v5-server');
@@ -949,19 +949,18 @@
     var lastOfflineLog = 0;
     function idleLoop() {
         if (!state.running || state.mode !== 'IDLE') return;
-        var tcin = getTabTcin();
-        if (!tcin || !isWatched(tcin)) {
-            // Not a watched product page (in Selected mode): show the
-            // panel, wait for navigation. In Any-product mode every
-            // product page is watched, so this branch is never taken.
-            renderPanel();
-            idleTimer = setTimeout(idleLoop, 2000);
-            return;
-        }
-        serverGet('/next?tcin=' + encodeURIComponent(tcin))
+        // Any target.com page works (homepage, search, any product page):
+        // ask the server for the oldest pending alert for ANY product.
+        // runArmed() claims it, and runArmedClaimed() opens the alerted
+        // product's page if this tab is not already on it. Filtering
+        // (watchlist / price cap / dedupe) already happened server-side,
+        // so there is nothing to check here — a queued alert is a buy.
+        serverGet('/next-any')
             .then(function (res) {
                 if (!state.running || state.mode !== 'IDLE') return;
                 if (res && res.status === 'pending' && res.alert) {
+                    var tcin = getTabTcin();
+                    log('🔔 Alert for TCIN ' + res.alert.tcin + ' — ' + (tcin === res.alert.tcin ? 'this page, claiming…' : 'opening its product page…'));
                     runArmed(res.alert);
                 } else {
                     idleTimer = setTimeout(idleLoop, IDLE_POLL_MS);
@@ -997,7 +996,7 @@
             handleCartPage();
             return;
         }
-        // Product page: resume an in-progress alert after a navigation/reload.
+        // Resume an in-progress alert after a navigation/reload.
         var pending = null;
         try { pending = JSON.parse(sessionStorage.getItem('v5_pending_alert') || 'null'); } catch (e) {}
         if (pending && pending.tcin === getTabTcin()) {
@@ -1007,8 +1006,15 @@
             runArmedClaimed(pending);
             return;
         }
+        if (pending && pending.tcin) {
+            // Claimed alert, but this tab landed on the wrong page (or the
+            // homepage): open the alerted product's page and resume there.
+            log('Claimed alert ' + pending.id + ' is for TCIN ' + pending.tcin + ' — opening its product page…');
+            window.location.href = 'https://www.target.com/p/-/A-' + pending.tcin;
+            return;
+        }
         setMode('IDLE');
-        log('⏳ Waiting for a Discord alert for TCIN ' + (getTabTcin() || '—') + '. No Target requests while waiting.');
+        log('⏳ Waiting for a Discord alert (any product). This tab will open the alerted product page itself. No Target requests while waiting.');
         idleLoop();
     }
 

@@ -257,7 +257,7 @@ class ModeIn(BaseModel):
     mode: str = Field(pattern="^(selected|any)$")
 
 # ---------------------------------------------------------------- app
-app = FastAPI(title="Target Discord-Alert Server v5", version="5.3.0")
+app = FastAPI(title="Target Discord-Alert Server v5", version="5.4.0")
 app.add_middleware(
     CORSMiddleware,
     # Only Discord and Target pages may call this server from a browser.
@@ -346,6 +346,23 @@ def next_alert(tcin: str = Query(...)):
             "SELECT * FROM alerts WHERE tcin=? AND status='pending' "
             "ORDER BY received_at ASC LIMIT 1",
             (tcin,),
+        ).fetchone()
+    if not row:
+        return {"status": "none"}
+    return {"status": "pending", "alert": row_to_dict(row)}
+
+@app.get("/next-any")
+def next_any_alert():
+    # v5.4.0: the buyer runs on ANY target.com page now (not just product
+    # pages), so it asks for the oldest pending alert for ANY product.
+    # The tab that gets it claims it, then opens that product's page
+    # itself. Only pending alerts are offered, so two tabs can never
+    # claim the same one — the loser gets a 409 on /ack and stands down.
+    with get_db() as conn:
+        expire_stale_pending(conn)
+        row = conn.execute(
+            "SELECT * FROM alerts WHERE status='pending' "
+            "ORDER BY received_at ASC LIMIT 1",
         ).fetchone()
     if not row:
         return {"status": "none"}

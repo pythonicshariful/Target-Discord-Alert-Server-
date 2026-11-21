@@ -190,17 +190,26 @@ async function testT7() {
   }, true);
 
   loadScript(window, 'tampermonkey/Target Auto Buyer v5 (Discord Alert).user.js');
-  await sleep(6000); // several idle polls
+  await sleep(6000); // idle polls (750ms) + claim + prepare-to-navigate
 
+  // v5.4.0: a tab on ANY target.com page takes the alert — it claims it
+  // and opens the alerted product's page. (jsdom cannot really navigate,
+  // so we assert the claim + ARMED + saved resume state instead of the
+  // URL change; the navigation itself is one location.href assignment.)
   const v5 = window.__v5buyer;
-  check('T7 script stays IDLE (no alert for this tab TCIN)',
-    v5 && v5.state.mode === 'IDLE', 'mode=' + (v5 && v5.state.mode));
+  check('T7 tab on another product page still picks up the alert (ARMED)',
+    v5 && v5.state.mode === 'ARMED', 'mode=' + (v5 && v5.state.mode));
   check('T7 no clicks', window.__clicks.length === 0, 'clicks: ' + JSON.stringify(window.__clicks));
-  check('T7 zero Target requests while IDLE', targetFetches === 0, 'targetFetches=' + targetFetches);
-  const next = await httpJson('GET', '/next?tcin=1010892070');
-  check('T7 the other-TCIN alert is still pending (not stolen by this tab)',
-    next.json.status === 'pending' && next.json.alert && next.json.alert.id === otherId,
-    JSON.stringify(next.json.status));
+  check('T7 zero Target requests before reaching the product page', targetFetches === 0, 'targetFetches=' + targetFetches);
+  const alerts = await httpJson('GET', '/alerts?limit=10');
+  const mine = (alerts.json.alerts || []).find((a) => a.id === otherId);
+  check('T7 the other-TCIN alert is CLAIMED by this tab (first tab wins)',
+    mine && mine.status === 'claimed', JSON.stringify(mine && mine.status));
+  let saved = null;
+  try { saved = JSON.parse(window.sessionStorage.getItem('v5_pending_alert') || 'null'); } catch (e) {}
+  check('T7 claimed alert saved for resume after navigation',
+    saved && saved.id === otherId && saved.tcin === '1010892070', JSON.stringify(saved));
+  await httpJson('POST', '/ack', { alert_id: otherId, status: 'failed', reason: 'cleanup' });
   window.close();
 }
 

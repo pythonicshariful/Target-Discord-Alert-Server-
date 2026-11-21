@@ -3,7 +3,7 @@
 Target Auto-Buy v5 — a Discord-alert-driven auto-purchase system for
 Target.com.
 
-**Version:** 5.3.0 — 2026-11-21
+**Version:** 5.4.0 — 2026-11-21
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 
@@ -101,7 +101,7 @@ dashboard at `http://127.0.0.1:5000/`:
 
 ### Step 3 — Settings in the v5 panel (on target.com)
 
-Open a watched product page. A dark panel appears bottom-right:
+Open ANY target.com page (even the homepage). A dark panel appears bottom-right:
 
 - **CVV:** type the CVV of your saved payment method. It is stored only
   in that browser profile (Tampermonkey storage) and is only ever typed
@@ -124,7 +124,11 @@ Open a watched product page. A dark panel appears bottom-right:
 2. Chrome open, logged in, with TWO tabs:
    - Discord, **#pokemon-target channel open** (Restockd alerts must be
      visible there — the Receiver only reads what this tab shows).
-   - Target product page for each profile, logged in, payment saved.
+   - Target — **any page** (even the homepage). When an alert arrives,
+     the tab opens the alerted product's page itself and starts the
+     purchase. If several profiles have a Target tab open, the first
+     tab to see the alert claims it — the others stand down, so only
+     one profile buys.
 3. PC must stay **on and awake overnight** — if it sleeps, or Chrome
    closes, the chain breaks silently. The panels are your only warning:
    Receiver panel top-right of Discord (🟢/🔴), v5 panel bottom-right
@@ -181,11 +185,12 @@ You do not need to wait for a real restock to prove the chain works:
 Check in this order — the Receiver panel (top-right of the Discord tab)
 tells the truth:
 
-1. **Open the PRODUCT page, not the Target homepage.** The Auto-Buy
-   script only runs on product pages (e.g.
-   `https://www.target.com/p/A-1011407490`). On `target.com` itself
-   Tampermonkey correctly says "No script is running" — that is
-   normal, not a bug.
+1. **Open ANY target.com page — even the homepage.** The Auto-Buy
+   script runs on every Target page now. When an alert arrives, the
+   tab opens the alerted product's page itself and starts the
+   purchase. If Tampermonkey says "No script is running" on a
+   `target.com` page, the v5.4.0 script is not installed on that
+   profile — reinstall it from the repo.
 2. **Discord must be open in a Chrome tab** on the test channel (the
    desktop app cannot run Tampermonkey scripts). The Receiver panel
    must be visible top-right; if there is no panel, the script is not
@@ -250,7 +255,7 @@ Target-Discord-Alert-Server-/
 │   ├── Target Discord Receiver.user.js                  Piece 2
 │   └── Target Auto Buyer v5 (Discord Alert).user.js     Piece 3
 ├── tests/
-│   ├── run_server_tests.py      T1–T4 + T11/T12/T14 (needs server up)
+│   ├── run_server_tests.py      T1–T4 + T11/T12/T14/T15 (needs server up)
 │   ├── run_browser_tests.js     T6/T7/T9 jsdom harness (needs node + jsdom)
 │   └── sample-alert-webhook.json  Restockd-style test alert for your own server
 ├── README.md                This file

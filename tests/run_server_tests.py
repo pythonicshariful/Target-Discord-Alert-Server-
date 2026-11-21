@@ -279,6 +279,49 @@ if ui_token:
           s == 200 and r.get("status") == "ignored" and r.get("reason") == "not_watched",
           f"HTTP {s} {r}")
 
+# --- T15: /next-any (v5.4.0) — oldest pending alert for ANY product, so a
+# --- buyer tab on any target.com page can find it and open its page. ---
+s, r = call("POST", "/alert", {
+    "source": "restockd-discord",
+    "title": "Pokémon TCG 30th Celebration Booster Bundle Box | Target",
+    "price": 31.99, "qty": "Pre-Order", "retailer": "Target",
+    "url": "https://www.target.com/p/-/A-1011407490",
+    "message_id": "test-msg-any-1",
+})
+check("T15 setup: first alert queued",
+      s == 200 and r.get("status") == "queued", f"HTTP {s} {r}")
+first_id = r.get("alert_id")
+s, r = call("POST", "/alert", {
+    "source": "restockd-discord",
+    "title": "Pokémon TCG 30th Celebration Knock Out Collection | Target",
+    "price": 11.99, "qty": "Pre-Order", "retailer": "Target",
+    "url": "https://www.target.com/p/-/A-1010892070",
+    "message_id": "test-msg-any-2",
+})
+check("T15 setup: second alert queued",
+      s == 200 and r.get("status") == "queued", f"HTTP {s} {r}")
+second_id = r.get("alert_id")
+s, r = call("GET", "/next-any")
+check("T15 /next-any returns the OLDEST pending alert (any TCIN)",
+      s == 200 and r.get("status") == "pending"
+      and r.get("alert", {}).get("id") == first_id
+      and r.get("alert", {}).get("tcin") == "1011407490", f"HTTP {s} {r}")
+s, r = call("POST", "/ack", {"alert_id": first_id, "status": "claimed"})
+check("T15 claim the first alert", s == 200 and r.get("status") == "claimed",
+      f"HTTP {s} {r}")
+s, r = call("GET", "/next-any")
+check("T15 /next-any then offers the next pending alert",
+      s == 200 and r.get("status") == "pending"
+      and r.get("alert", {}).get("id") == second_id
+      and r.get("alert", {}).get("tcin") == "1010892070", f"HTTP {s} {r}")
+s, r = call("POST", "/ack", {"alert_id": second_id, "status": "failed", "reason": "cleanup"})
+check("T15 cleanup: second alert acked", s == 200, f"HTTP {s} {r}")
+s, r = call("POST", "/ack", {"alert_id": first_id, "status": "failed", "reason": "cleanup"})
+check("T15 cleanup: first alert acked", s == 200, f"HTTP {s} {r}")
+s, r = call("GET", "/next-any")
+check("T15 /next-any is none when nothing is pending",
+      s == 200 and r.get("status") == "none", f"HTTP {s} {r}")
+
 print()
 if FAILURES:
     print(f"RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")
