@@ -1,6 +1,7 @@
 # Local-only files — never pushed to GitHub
 server/alerts.db
 server/server.log
+server/.venv/
 __pycache__/
 *.pyc
 node_modules/
