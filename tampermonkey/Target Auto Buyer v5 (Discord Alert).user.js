@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Auto Buyer v5 (Discord Alert)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.0.0
+// @version      5.2.0
 // @description  Watches the local v5 server for Discord restock alerts and buys ONLY the alerted product (TCIN-verified, price-capped, quantity 1). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://www.target.com/p/*
@@ -53,7 +53,7 @@
  * (Synthetic mouse events are isTrusted=false and cannot reliably pass;
  *  auto-solving was considered and declined on 2026-11-15.)
  *
- * WATCHLIST (must match server/config.json):
+ * WATCHLIST (must match the server's watchlist — set in its dashboard):
  *   1011407490  Booster Bundle Box    max $31.99
  *   1010892070  Knock Out Collection  max $11.99
  * The $79.99 Unova product from the sample screenshots is a SAMPLE ONLY

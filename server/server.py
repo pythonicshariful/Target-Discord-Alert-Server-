@@ -3,8 +3,13 @@ Target Discord-Alert Server — Piece 1 of Auto-Buy v5.
 
 Receives Restockd Discord alerts (forwarded by the Tampermonkey Discord
 Receiver running in the buyer's own browser tab), matches them against the
-watchlist in config.json, dedupes them, and queues them for the Tampermonkey
+watchlist, dedupes them, and queues them for the Tampermonkey
 Auto-Buy v5 script running on target.com.
+
+There is NO config file. Everything the server needs (secret token,
+watchlist, timing settings) lives in its own database file, alerts.db,
+created automatically on first start. Just run the server and open the
+dashboard — nothing to edit, nothing to copy into a file.
 
 - Binds to 127.0.0.1 ONLY. Never expose this to the internet.
 - This server NEVER talks to Target or Discord itself.
@@ -18,7 +23,7 @@ products, change the price caps and timing settings, and see recent
 alerts — no file editing needed. (The buyer still sets the same secret
 token in the two Tampermonkey scripts once, see README.md.)
 
-Watchlist (config.json — the ONLY two products):
+Watchlist (the ONLY two products — change them in the dashboard):
   1011407490  Booster Bundle Box     max $31.99
   1010892070  Knock Out Collection   max $11.99
 The $79.99 Unova product from the sample screenshots is a SAMPLE ONLY and
@@ -44,38 +49,17 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "config.json"
-CONFIG_EXAMPLE_PATH = BASE_DIR / "config.example.json"
 DB_PATH = BASE_DIR / "alerts.db"
 LOG_PATH = BASE_DIR / "server.log"
 
-# ---------------------------------------------------------------- config
-# If config.json is missing (first run), create it from the example with a
-# fresh random token, so a non-technical user never has to edit a file to
-# get started. The token still has to be copied into the two Tampermonkey
-# scripts once (dashboard shows it — see the dashboard's Token section).
-if not CONFIG_PATH.exists():
-    if CONFIG_EXAMPLE_PATH.exists():
-        CONFIG = json.loads(CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8"))
-    else:
-        CONFIG = {
-            "alert_ttl_seconds": 600,
-            "dedupe_window_seconds": 900,
-            "host": "127.0.0.1",
-            "port": 5000,
-            "secret_token": "CHANGE-ME-replace-with-a-long-random-string",
-            "watchlist": [
-                {"max_price": 31.99, "name": "Booster Bundle Box",
-                 "tcin": "1011407490"},
-                {"max_price": 11.99, "name": "Knock Out Collection",
-                 "tcin": "1010892070"},
-            ],
-        }
-    CONFIG["secret_token"] = secrets.token_hex(16)
-    CONFIG_PATH.write_text(json.dumps(CONFIG, indent=2) + "\n", encoding="utf-8")
-
-with open(CONFIG_PATH, encoding="utf-8") as f:
-    CONFIG = json.load(f)
+HOST = "127.0.0.1"
+PORT = 5000
+DEFAULT_DEDUPE_WINDOW_SECONDS = 900
+DEFAULT_ALERT_TTL_SECONDS = 600
+DEFAULT_WATCHLIST = [
+    {"tcin": "1011407490", "name": "Booster Bundle Box", "max_price": 31.99},
+    {"tcin": "1010892070", "name": "Knock Out Collection", "max_price": 11.99},
+]
 
 # Ephemeral token for the dashboard UI only. Generated fresh on every
 # server start, kept in memory, never written to disk. The dashboard page
@@ -84,25 +68,18 @@ with open(CONFIG_PATH, encoding="utf-8") as f:
 # alert token the Tampermonkey scripts use.
 UI_TOKEN = secrets.token_urlsafe(24)
 
-def save_config():
-    """Persist the in-memory CONFIG back to config.json."""
-    CONFIG_PATH.write_text(json.dumps(CONFIG, indent=2) + "\n", encoding="utf-8")
-
-def sync_watchlist_from_config():
-    WATCHLIST.clear()
-    WATCHLIST.update({w["tcin"]: w for w in CONFIG["watchlist"]})
-
-SECRET_TOKEN = CONFIG["secret_token"]
-PORT = int(CONFIG.get("port", 5000))
-HOST = CONFIG.get("host", "127.0.0.1")
-ALERT_TTL_SECONDS = int(CONFIG.get("alert_ttl_seconds", 600))
-DEDUPE_WINDOW_SECONDS = int(CONFIG.get("dedupe_window_seconds", 900))
-WATCHLIST = {w["tcin"]: w for w in CONFIG["watchlist"]}
-
-if not SECRET_TOKEN or SECRET_TOKEN.startswith("CHANGE-ME"):
-    raise SystemExit("config.json: set a long random secret_token before starting.")
-
 STARTED_AT = time.time()
+
+# Settings below are loaded from the database by refresh_settings() after
+# init_db() runs. There is no config file: on first start the server
+# generates a random secret token, stores it in alerts.db, and seeds the
+# default watchlist. The token is printed in the terminal at startup and
+# shown in the dashboard (Show/Copy) — the buyer puts it in the two
+# Tampermonkey scripts once.
+SECRET_TOKEN = ""
+ALERT_TTL_SECONDS = DEFAULT_ALERT_TTL_SECONDS
+DEDUPE_WINDOW_SECONDS = DEFAULT_DEDUPE_WINDOW_SECONDS
+WATCHLIST = {}
 
 # ---------------------------------------------------------------- logging
 logger = logging.getLogger("v5server")
@@ -142,7 +119,67 @@ def init_db():
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_tcin_status ON alerts(tcin, status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_received ON alerts(received_at)")
+        # Settings tables — the whole reason there is no config file.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS watchlist (
+                tcin TEXT PRIMARY KEY, name TEXT NOT NULL,
+                max_price REAL NOT NULL)"""
+        )
+        # First start (or a database from before v5.2.0): seed the token,
+        # the timing defaults and the two watched products.
+        if not conn.execute(
+            "SELECT 1 FROM meta WHERE key='secret_token'"
+        ).fetchone():
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES ('secret_token', ?)",
+                (secrets.token_hex(16),),
+            )
+        for key, default in (("dedupe_window_seconds", str(DEFAULT_DEDUPE_WINDOW_SECONDS)),
+                             ("alert_ttl_seconds", str(DEFAULT_ALERT_TTL_SECONDS))):
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                (key, default),
+            )
+        if not conn.execute("SELECT 1 FROM watchlist LIMIT 1").fetchone():
+            for w in DEFAULT_WATCHLIST:
+                conn.execute(
+                    "INSERT OR IGNORE INTO watchlist (tcin, name, max_price) "
+                    "VALUES (?, ?, ?)",
+                    (w["tcin"], w["name"], w["max_price"]),
+                )
 init_db()
+
+def refresh_settings():
+    """Load the in-memory settings globals from the database."""
+    global SECRET_TOKEN, ALERT_TTL_SECONDS, DEDUPE_WINDOW_SECONDS
+    with get_db() as conn:
+        meta = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM meta")}
+    SECRET_TOKEN = meta["secret_token"]
+    ALERT_TTL_SECONDS = int(meta.get("alert_ttl_seconds", DEFAULT_ALERT_TTL_SECONDS))
+    DEDUPE_WINDOW_SECONDS = int(meta.get("dedupe_window_seconds", DEFAULT_DEDUPE_WINDOW_SECONDS))
+
+def refresh_watchlist():
+    """Load the in-memory WATCHLIST dict from the database."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM watchlist").fetchall()
+    WATCHLIST.clear()
+    WATCHLIST.update({r["tcin"]: {"tcin": r["tcin"], "name": r["name"],
+                                  "max_price": r["max_price"]} for r in rows})
+
+def set_meta(key: str, value: str):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+refresh_settings()
+refresh_watchlist()
 
 def row_to_dict(row):
     d = dict(row)
@@ -215,7 +252,7 @@ class AckIn(BaseModel):
     reason: Optional[str] = None
 
 # ---------------------------------------------------------------- app
-app = FastAPI(title="Target Discord-Alert Server v5", version="5.0.0")
+app = FastAPI(title="Target Discord-Alert Server v5", version="5.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # localhost-only service; browser userscripts call it directly
@@ -526,7 +563,7 @@ async function changeToken(){
   if(!confirm("Change the secret token? You must then put the SAME token in both Tampermonkey scripts (v5_token), or the scripts stop working.")) return;
   try{
     await api("/api/config/token", {method: "POST", body: JSON.stringify({new_token: v})});
-    msg.innerHTML = '<span class="warn">Token changed. Now put this same token in both Tampermonkey scripts (v5_token) and restart the server.</span>';
+    msg.innerHTML = '<span class="warn">Token changed. Now put this same token in both Tampermonkey scripts (v5_token), then reload the Discord and Target tabs.</span>';
     loadAll();
   }catch(e){ msg.textContent = "Could not change: " + e.message; }
 }
@@ -555,7 +592,6 @@ def get_config(request: Request):
 @app.post("/api/config/watchlist")
 def add_watchlist(payload: WatchlistAddIn, request: Request):
     check_ui_token(request)
-    global CONFIG
     tcin = payload.tcin.strip()
     name = payload.name.strip()
     if not re.fullmatch(r"\d{6,}", tcin):
@@ -566,32 +602,32 @@ def add_watchlist(payload: WatchlistAddIn, request: Request):
         raise HTTPException(status_code=400, detail="Max price must be between $0.01 and $10000")
     if tcin in WATCHLIST:
         raise HTTPException(status_code=409, detail="That TCIN is already watched")
-    CONFIG["watchlist"].append({"tcin": tcin, "name": name, "max_price": payload.max_price})
-    save_config()
-    sync_watchlist_from_config()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO watchlist (tcin, name, max_price) VALUES (?, ?, ?)",
+            (tcin, name, payload.max_price),
+        )
+    refresh_watchlist()
     logger.info("dashboard: added watchlist %s %s max $%s", tcin, name, payload.max_price)
-    return {"ok": True, "watchlist": CONFIG["watchlist"]}
+    return {"ok": True, "watchlist": list(WATCHLIST.values())}
 
 @app.delete("/api/config/watchlist/{tcin}")
 def remove_watchlist(tcin: str, request: Request):
     check_ui_token(request)
     if tcin not in WATCHLIST:
         raise HTTPException(status_code=404, detail="That TCIN is not watched")
-    CONFIG["watchlist"] = [w for w in CONFIG["watchlist"] if w["tcin"] != tcin]
-    save_config()
-    sync_watchlist_from_config()
+    with get_db() as conn:
+        conn.execute("DELETE FROM watchlist WHERE tcin=?", (tcin,))
+    refresh_watchlist()
     logger.info("dashboard: removed watchlist %s", tcin)
-    return {"ok": True, "watchlist": CONFIG["watchlist"]}
+    return {"ok": True, "watchlist": list(WATCHLIST.values())}
 
 @app.post("/api/config/settings")
 def update_settings(payload: SettingsIn, request: Request):
     check_ui_token(request)
-    global DEDUPE_WINDOW_SECONDS, ALERT_TTL_SECONDS
-    DEDUPE_WINDOW_SECONDS = payload.dedupe_window_seconds
-    ALERT_TTL_SECONDS = payload.alert_ttl_seconds
-    CONFIG["dedupe_window_seconds"] = payload.dedupe_window_seconds
-    CONFIG["alert_ttl_seconds"] = payload.alert_ttl_seconds
-    save_config()
+    set_meta("dedupe_window_seconds", str(payload.dedupe_window_seconds))
+    set_meta("alert_ttl_seconds", str(payload.alert_ttl_seconds))
+    refresh_settings()
     logger.info("dashboard: settings dedupe=%s ttl=%s",
                 DEDUPE_WINDOW_SECONDS, ALERT_TTL_SECONDS)
     return {"ok": True,
@@ -601,22 +637,22 @@ def update_settings(payload: SettingsIn, request: Request):
 @app.post("/api/config/token")
 def change_token(payload: TokenIn, request: Request):
     check_ui_token(request)
-    global SECRET_TOKEN
     new = payload.new_token.strip()
     if len(new) < 16 or new.startswith("CHANGE-ME"):
         raise HTTPException(status_code=400,
                             detail="Token must be at least 16 characters")
-    SECRET_TOKEN = new
-    CONFIG["secret_token"] = new
-    save_config()
+    set_meta("secret_token", new)
+    refresh_settings()
     logger.info("dashboard: secret token changed (value not logged)")
     return {"ok": True,
             "warning": "Put this same token in both Tampermonkey scripts "
-                       "(v5_token) and restart the server."}
+                       "(v5_token), then reload the Discord and Target tabs."}
 
 if __name__ == "__main__":
     import uvicorn
     logger.info("v5 server starting on %s:%d (watchlist: %s)",
                 HOST, PORT, ", ".join(WATCHLIST))
     logger.info("dashboard: open http://127.0.0.1:%d/ in a browser", PORT)
+    logger.info("secret token (for the two Tampermonkey scripts, v5_token): %s",
+                SECRET_TOKEN)
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

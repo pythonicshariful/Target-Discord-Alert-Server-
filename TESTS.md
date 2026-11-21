@@ -3,13 +3,17 @@
 **Date:** 2026-11-20 (re-verified after the 2026-11-20 token sanitization
 for the public repo push: server tests 12/12, T6 9/9, T7 5/5 — all PASS;
 re-verified again after the 2026-11-20 dashboard UI was added: server
-tests incl. new T11 UI checks 23/23, T6 9/9, T7 5/5 — all PASS)
+tests incl. new T11 UI checks 23/23, T6 9/9, T7 5/5 — all PASS;
+re-verified again after the 2026-11-21 no-config-file change (v5.2.0):
+server tests incl. new T12 no-config checks 26/26, T6 9/9, T7 5/5 —
+all PASS)
 **Rule followed:** no test is marked passed unless it was actually run.
 Tests that need the live Discord channel, a real challenge, or an
 overnight soak are marked NOT RUN, not passed.
-**Token note:** the test harnesses read the secret token from the local
-`server/config.json` at runtime — no real token is stored in any test
-file or in this repo.
+**Token note:** the test harnesses fetch the secret token from the
+dashboard at runtime (GET `/` for the per-start UI token, then
+`/api/config`) — no real token is stored in any test file or in this
+repo, and there is no config file (v5.2.0).
 
 ## How to re-run
 
@@ -52,6 +56,7 @@ watched product at its real price.
 | T7 | Pending alert for the OTHER watched TCIN (1010892070) while the tab is on 1011407490: script stays IDLE, zero clicks, zero Target requests, the other alert stays pending (not stolen). | PASS (5/5 checks) |
 | T9 | Server stopped; Receiver fed a realistic Restockd embed in a fake Discord DOM: it parses the alert (title/price/link), retries the POST 3×, keeps the alert in its retry queue, panel shows 🔴 OFFLINE, zero Target requests. | PASS (5/5 checks) |
 | T11 | Dashboard UI (`GET /` + `/api/config`, added 2026-11-20 so a non-technical user never edits a file): page loads with a per-start UI token and the Add-product form; wrong UI token → 401; add product works, duplicate TCIN → 409, non-numeric TCIN → 400; settings update + restore works; remove product works and `/status` is back to the original two products afterwards. Token-change via the dashboard is NOT covered by automated tests (it would break the running test server's auth) — verify it manually once. | PASS (11/11 checks) |
+| T12 | No config file (v5.2.0, 2026-11-21): the server starts and serves with NO `config.json` / `config.example.json` anywhere — token + watchlist come from its own database (`alerts.db`, created automatically), and `/status` shows the seeded two products on a fresh database. The test harnesses fetch the token from the dashboard instead of a file. | PASS (3/3 checks) |
 
 ### NOT RUN (need live conditions — not claimed as passed)
 

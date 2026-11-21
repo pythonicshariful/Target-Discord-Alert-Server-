@@ -24,7 +24,18 @@ const { JSDOM } = require('jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = 'http://127.0.0.1:5000';
-const TOKEN = JSON.parse(fs.readFileSync(path.join(ROOT, 'server', 'config.json'), 'utf8')).secret_token; // local config only, never pushed
+// No config file (v5.2.0): the token is fetched from the dashboard at
+// runtime, exactly as a browser would — GET / for the per-start UI token,
+// then GET /api/config with it.
+let TOKEN = null;
+async function fetchServerToken() {
+  const html = await (await fetch(SERVER + '/')).text();
+  const uiToken = /const UI_TOKEN = "([^"]+)"/.exec(html)[1];
+  const cfg = await (await fetch(SERVER + '/api/config', {
+    headers: { 'X-UI-Token': uiToken },
+  })).json();
+  return cfg.secret_token;
+}
 const TEST = process.argv[2];
 const FAILURES = [];
 let targetFetches = 0; // counts any fetch() to a target.com / redsky host
@@ -242,6 +253,7 @@ async function testT9() {
 // ---------------------------------------------------------------- main
 (async () => {
   try {
+    if (TEST === 't6' || TEST === 't7') TOKEN = await fetchServerToken();
     if (TEST === 't6') await testT6();
     else if (TEST === 't7') await testT7();
     else if (TEST === 't9') await testT9();

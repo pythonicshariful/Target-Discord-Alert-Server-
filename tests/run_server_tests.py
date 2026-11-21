@@ -1,16 +1,31 @@
-"""Server tests T1-T4 for the v5 Discord-Alert server (run while server.py is up).
+"""Server tests T1-T4 + T11/T12 for the v5 Discord-Alert server
+(run while server.py is up).
 Usage:  python tests/run_server_tests.py [base_url]
 Prints PASS/FAIL per test and exits non-zero on any failure.
 Uses a FRESH database: stop the server, delete server/alerts.db, restart, run.
+No config file (v5.2.0): the token is fetched from the dashboard at
+runtime, exactly as a browser would.
 """
 import json
+import pathlib
+import re
 import sys
 import urllib.request
 
 BASE = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:5000"
-import pathlib
-TOKEN = json.loads((pathlib.Path(__file__).resolve().parent.parent
-    / "server" / "config.json").read_text())["secret_token"]  # local config only, never pushed
+
+
+def _fetch_token():
+    with urllib.request.urlopen(BASE + "/", timeout=10) as resp:
+        html = resp.read().decode()
+    ui_token = re.search(r'const UI_TOKEN = "([^"]+)"', html).group(1)
+    req = urllib.request.Request(
+        BASE + "/api/config", headers={"X-UI-Token": ui_token})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())["secret_token"]
+
+
+TOKEN = _fetch_token()
 FAILURES = []
 
 
@@ -190,6 +205,19 @@ if ui_token:
     s, r = call("GET", "/status")
     check("T11 /status watchlist back to the original two",
           s == 200 and len(r.get("watchlist", [])) == 2, f"HTTP {s} {r}")
+
+# --- T12: no config file (v5.2.0) — the server must run with NO
+# --- config.json / config.example.json anywhere, its token + watchlist
+# --- coming from its own database instead. ---
+_root = pathlib.Path(__file__).resolve().parent.parent
+check("T12 no config.json exists", not (_root / "server" / "config.json").exists())
+check("T12 no config.example.json exists",
+      not (_root / "server" / "config.example.json").exists())
+s, r = call("GET", "/status")
+check("T12 fresh-DB server still serves the seeded two products",
+      s == 200 and len(r.get("watchlist", [])) == 2
+      and {w["tcin"] for w in r["watchlist"]} == {"1011407490", "1010892070"},
+      f"HTTP {s} {r}")
 
 print()
 if FAILURES:

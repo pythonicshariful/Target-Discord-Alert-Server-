@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Discord Receiver v5 (Restockd Alerts)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.0.0
+// @version      5.2.0
 // @description  Reads Restockd restock alerts in the buyer's own Discord tab (#pokemon-target) and forwards them to the local v5 server (http://127.0.0.1:5000). No self-bot, no user-token login — it only reads what the buyer's own logged-in Discord tab already shows. Filtering (watchlist / price cap / dedupe) happens server-side.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://discord.com/channels/*
@@ -33,12 +33,12 @@
  *     ToS and risks an account ban). If this tab is closed or the PC
  *     sleeps, no alerts are received — there is no background magic.
  *   - No filtering by product here. Every Restockd/Target alert is sent;
- *     the server's watchlist (config.json) is the only filter.
+ *     the server's watchlist (managed in its dashboard) is the only filter.
  *   - It never buys anything. Buying is Piece 3's job.
  *
  * SETTINGS (Tampermonkey dashboard > this script > Settings, or the panel):
  *   v5_server_url : http://127.0.0.1:5000   (the local server)
- *   v5_token      : must match server/config.json secret_token
+ *   v5_token      : must match the server's secret token (dashboard > Secret token)
  *
  * No purchase is promised by this script. A forwarded alert only means
  * "Restockd posted about a product" — stock can still be gone by the

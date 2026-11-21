@@ -3,7 +3,7 @@
 Target Auto-Buy v5 — a Discord-alert-driven auto-purchase system for
 Target.com.
 
-**Version:** 5.0.0 — 2026-11-20
+**Version:** 5.2.0 — 2026-11-21
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 
@@ -43,21 +43,32 @@ and is deliberately NOT watched.
 1. Install Python 3.11 or newer from python.org. During install, tick
    **"Add python.exe to PATH"**.
 2. Copy this whole folder somewhere, e.g. `C:\TargetBot-v5\`.
-3. Double-click `server\start-server.bat`. The first run installs the
-   dependencies (FastAPI + uvicorn). A black window opens — **keep it
-   open** while the bot runs — and the **dashboard opens in your
-   browser** at `http://127.0.0.1:5000/`. (First run only: the server
-   creates `server\config.json` for you with a fresh random token.
-   You never have to edit a file.)
+3. Double-click `server\start-server.bat` (on Windows) or run
+   `python3 server/server.py` (on Linux/Mac). The first run installs
+   the dependencies (FastAPI + uvicorn). A black window opens —
+   **keep it open** while the bot runs — and the **dashboard opens in
+   your browser** at `http://127.0.0.1:5000/`.
 4. **Set the same token in the two Tampermonkey scripts (once):** in
    the dashboard, go to the **Secret token** section, click **Show**
    then **Copy**. Then in Chrome: Tampermonkey dashboard > each script
    > Settings tab > find `v5_token` > paste the token > Save. Do this
-   for **both** scripts. The three places must match, or the server
-   rejects the scripts. Never post the token anywhere.
+   for **both** scripts. The server and the scripts must use the same
+   token, or the server rejects the scripts. Never post the token
+   anywhere. (The token is also printed in the black server window.)
 5. Check it works: in the dashboard you should see **Running** and the
    two watched products. (Or open `http://127.0.0.1:5000/health` — you
    should see `{"ok":true}`.)
+
+> **There is no config file.** The server keeps everything (secret
+> token, watched products, settings) in its own database file,
+> `server/alerts.db`, created automatically on first start. You never
+> edit a file. If you have old `config.json` / `config.example.json`
+> files from an earlier version, delete them — the server does not use
+> them.
+>
+> **Updating from v5.1.0:** the token is new this once — copy it from
+> the dashboard (Step 4) into both scripts again. After that it stays
+> the same across restarts.
 
 ### Step 1b — Manage products in the dashboard (no file editing)
 
@@ -185,10 +196,11 @@ You do not need to wait for a real restock to prove the chain works:
 - Never buy a CAPTCHA solver for this: NopeCHA / 2Captcha do not solve
   Target's PerimeterX Press & Hold.
 - The server binds to `127.0.0.1` only and is not reachable from the
-  internet. The token in `server/config.json` is shared with the two
-  Tampermonkey scripts (Tampermonkey dashboard > script settings >
-  `v5_token` / `v5_server_url`). If you change it, change it in all
-  three places. Do not post `config.json` anywhere.
+  internet. The secret token (shown in the dashboard, also printed in
+  the server window) is shared with the two Tampermonkey scripts
+  (Tampermonkey dashboard > script settings > `v5_token` /
+  `v5_server_url`). If you change it, change it in all three places.
+  Do not post the token anywhere.
 - If Discord changes its page layout, the Receiver may stop parsing
   alerts (its panel will keep showing the old counts). Tell Shariful —
   the parser is the part that needs maintenance.
@@ -202,10 +214,10 @@ You do not need to wait for a real restock to prove the chain works:
 Target-Discord-Alert-Server-/
 ├── server/
 │   ├── server.py            Piece 1 — FastAPI server (127.0.0.1:5000)
-│   ├── config.example.json  Copy to config.json, set your own token
 │   ├── requirements.txt     fastapi + uvicorn
 │   ├── start-server.bat     Double-click starter (Windows)
-│   ├── alerts.db            Created on first run (SQLite alert log, gitignored)
+│   ├── alerts.db            Created on first run (SQLite: alerts + token +
+│   │                        watchlist + settings, gitignored)
 │   └── server.log           Created on first run (rotating log, gitignored)
 ├── tampermonkey/
 │   ├── Target Discord Receiver.user.js                  Piece 2
@@ -218,9 +230,9 @@ Target-Discord-Alert-Server-/
 └── TESTS.md                 What was actually tested, with results
 ```
 
-`server/config.json` is intentionally NOT in this repo — it holds your
-private token. Copy `config.example.json` to `config.json` and set a
-token of your own (see Step 1).
+There is no config file in this repo on purpose — the server creates
+its own database (`server/alerts.db`) on first start and keeps the
+secret token there. Never post the token anywhere.
 
 ## If something goes wrong
 
