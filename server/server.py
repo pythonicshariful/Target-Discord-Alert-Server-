@@ -6,10 +6,17 @@ Receiver running in the buyer's own browser tab), matches them against the
 watchlist, dedupes them, and queues them for the Tampermonkey
 Auto-Buy v5 script running on target.com.
 
-There is NO config file. Everything the server needs (secret token,
-watchlist, timing settings) lives in its own database file, alerts.db,
-created automatically on first start. Just run the server and open the
-dashboard — nothing to edit, nothing to copy into a file.
+There is NO config file and NO token. Everything the server needs
+(watchlist, buy mode, timing settings) lives in its own database file,
+alerts.db, created automatically on first start. Just run the server
+and open the dashboard — nothing to edit, nothing to copy anywhere.
+The server binds to 127.0.0.1 only, and the browser only allows
+Discord and Target pages to call it, so a random website cannot
+trigger a purchase.
+
+Buy modes (dashboard):
+  selected — buy ONLY the watched products, at or under their max price.
+  any      — buy ANY Target product that gets alerted, at ANY price.
 
 - Binds to 127.0.0.1 ONLY. Never expose this to the internet.
 - This server NEVER talks to Target or Discord itself.
@@ -19,9 +26,9 @@ dashboard — nothing to edit, nothing to copy into a file.
 
 Dashboard: open http://127.0.0.1:5000/ in a browser after starting the
 server. The dashboard lets a non-technical user add/remove watched
-products, change the price caps and timing settings, and see recent
-alerts — no file editing needed. (The buyer still sets the same secret
-token in the two Tampermonkey scripts once, see README.md.)
+products, pick the buy mode (selected products vs any product), change
+the price caps and timing settings, and see recent alerts — no file
+editing needed, nothing to copy anywhere.
 
 Watchlist (the ONLY two products — change them in the dashboard):
   1011407490  Booster Bundle Box     max $31.99
@@ -64,19 +71,17 @@ DEFAULT_WATCHLIST = [
 # Ephemeral token for the dashboard UI only. Generated fresh on every
 # server start, kept in memory, never written to disk. The dashboard page
 # served by this server carries it; only a browser that loaded that page
-# (on this PC) can call the /api/config endpoints with it. It is NOT the
-# alert token the Tampermonkey scripts use.
+# (on this PC) can call the /api/config endpoints with it. The user
+# never sees or types it — it is not a password or a setup step.
 UI_TOKEN = secrets.token_urlsafe(24)
 
 STARTED_AT = time.time()
 
 # Settings below are loaded from the database by refresh_settings() after
-# init_db() runs. There is no config file: on first start the server
-# generates a random secret token, stores it in alerts.db, and seeds the
-# default watchlist. The token is printed in the terminal at startup and
-# shown in the dashboard (Show/Copy) — the buyer puts it in the two
-# Tampermonkey scripts once.
-SECRET_TOKEN = ""
+# init_db() runs. There is no config file and no token: on first start
+# the server seeds the default watchlist and the default buy mode
+# ("selected") in alerts.db.
+BUY_MODE = "selected"  # "selected" | "any"
 ALERT_TTL_SECONDS = DEFAULT_ALERT_TTL_SECONDS
 DEDUPE_WINDOW_SECONDS = DEFAULT_DEDUPE_WINDOW_SECONDS
 WATCHLIST = {}
@@ -129,16 +134,13 @@ def init_db():
                 tcin TEXT PRIMARY KEY, name TEXT NOT NULL,
                 max_price REAL NOT NULL)"""
         )
-        # First start (or a database from before v5.2.0): seed the token,
-        # the timing defaults and the two watched products.
-        if not conn.execute(
-            "SELECT 1 FROM meta WHERE key='secret_token'"
-        ).fetchone():
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('secret_token', ?)",
-                (secrets.token_hex(16),),
-            )
-        for key, default in (("dedupe_window_seconds", str(DEFAULT_DEDUPE_WINDOW_SECONDS)),
+        # v5.3.0 removed the token entirely: drop it if an older database
+        # still has one. No token is ever generated or required again.
+        conn.execute("DELETE FROM meta WHERE key='secret_token'")
+        # First start (or a database from before v5.3.0): seed the buy
+        # mode, the timing defaults and the two watched products.
+        for key, default in (("buy_mode", "selected"),
+                             ("dedupe_window_seconds", str(DEFAULT_DEDUPE_WINDOW_SECONDS)),
                              ("alert_ttl_seconds", str(DEFAULT_ALERT_TTL_SECONDS))):
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
@@ -155,10 +157,12 @@ init_db()
 
 def refresh_settings():
     """Load the in-memory settings globals from the database."""
-    global SECRET_TOKEN, ALERT_TTL_SECONDS, DEDUPE_WINDOW_SECONDS
+    global BUY_MODE, ALERT_TTL_SECONDS, DEDUPE_WINDOW_SECONDS
     with get_db() as conn:
         meta = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM meta")}
-    SECRET_TOKEN = meta["secret_token"]
+    BUY_MODE = meta.get("buy_mode", "selected")
+    if BUY_MODE not in ("selected", "any"):
+        BUY_MODE = "selected"
     ALERT_TTL_SECONDS = int(meta.get("alert_ttl_seconds", DEFAULT_ALERT_TTL_SECONDS))
     DEDUPE_WINDOW_SECONDS = int(meta.get("dedupe_window_seconds", DEFAULT_DEDUPE_WINDOW_SECONDS))
 
@@ -228,13 +232,12 @@ def expire_stale_pending(conn):
     if cur.rowcount:
         logger.info("expired %d stale pending alert(s)", cur.rowcount)
 
-def check_token(token: Optional[str]):
-    if token != SECRET_TOKEN:
-        raise HTTPException(status_code=401, detail="bad token")
-
 # ---------------------------------------------------------------- models
+# No token anywhere (v5.3.0): the server binds to 127.0.0.1 only, and
+# CORS below allows only Discord and Target pages to call it from a
+# browser. The Tampermonkey scripts use GM_xmlhttpRequest, which is not
+# subject to CORS at all.
 class AlertIn(BaseModel):
-    token: str
     source: str = "restockd-discord"
     title: Optional[str] = None
     price: Optional[float] = None
@@ -246,16 +249,21 @@ class AlertIn(BaseModel):
     message_id: Optional[str] = None
 
 class AckIn(BaseModel):
-    token: str
     alert_id: int
     status: str = Field(pattern="^(claimed|done|failed)$")
     reason: Optional[str] = None
 
+class ModeIn(BaseModel):
+    mode: str = Field(pattern="^(selected|any)$")
+
 # ---------------------------------------------------------------- app
-app = FastAPI(title="Target Discord-Alert Server v5", version="5.2.0")
+app = FastAPI(title="Target Discord-Alert Server v5", version="5.3.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # localhost-only service; browser userscripts call it directly
+    # Only Discord and Target pages may call this server from a browser.
+    # (GM_xmlhttpRequest from the Tampermonkey scripts bypasses CORS.)
+    allow_origins=["https://discord.com", "https://www.target.com",
+                   "https://target.com"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -273,6 +281,7 @@ def status():
         ).fetchone()[0]
     return {
         "ok": True,
+        "mode": BUY_MODE,
         "watchlist": [
             {"tcin": t, "name": w["name"], "max_price": w["max_price"]}
             for t, w in WATCHLIST.items()
@@ -283,7 +292,6 @@ def status():
 
 @app.post("/alert")
 def post_alert(payload: AlertIn):
-    check_token(payload.token)
     now = time.time()
     tcin = extract_tcin(payload.url, payload.tcin)
     price = parse_price(payload.price)
@@ -292,11 +300,15 @@ def post_alert(payload: AlertIn):
     status, reason = "pending", None
     if not tcin:
         status, reason = "unmatched", "no_tcin_in_url"
+    elif BUY_MODE == "any":
+        pass  # any product, any price — no watchlist / cap check
     elif tcin not in WATCHLIST:
         status, reason = "ignored", "not_watched"
     elif price is not None and price > float(WATCHLIST[tcin]["max_price"]):
         status, reason = "ignored", "over_price_cap"
-    else:
+    # Dedupe runs in BOTH modes: a repeat alert for the same product
+    # while one is still pending/claimed must not buy twice.
+    if status == "pending":
         with get_db() as conn:
             row = conn.execute(
                 "SELECT id, status FROM alerts WHERE tcin=? AND received_at > ? "
@@ -327,11 +339,7 @@ def post_alert(payload: AlertIn):
             "reason": reason}
 
 @app.get("/next")
-def next_alert(tcin: str = Query(...), token: Optional[str] = Query(None)):
-    # Read path: token is optional (localhost-only service). If a token IS
-    # supplied it must be correct; the write paths always require it.
-    if token is not None:
-        check_token(token)
+def next_alert(tcin: str = Query(...)):
     with get_db() as conn:
         expire_stale_pending(conn)
         row = conn.execute(
@@ -345,7 +353,6 @@ def next_alert(tcin: str = Query(...), token: Optional[str] = Query(None)):
 
 @app.post("/ack")
 def ack_alert(payload: AckIn):
-    check_token(payload.token)
     now = time.time()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id=?", (payload.alert_id,)).fetchone()
@@ -403,8 +410,7 @@ def list_alerts(limit: int = Query(50, ge=1, le=200)):
 # products, change price caps and timing, see recent alerts. No file
 # editing needed. The page is served only on 127.0.0.1. Config changes go
 # through /api/config, which requires the per-start UI_TOKEN (embedded in
-# the served page only). The alert token is shown masked, with a
-# show/copy button — it never leaves this PC, and it is never in the repo.
+# the served page only).
 class WatchlistAddIn(BaseModel):
     tcin: str
     name: str
@@ -413,9 +419,6 @@ class WatchlistAddIn(BaseModel):
 class SettingsIn(BaseModel):
     dedupe_window_seconds: int = Field(ge=60, le=86400)
     alert_ttl_seconds: int = Field(ge=60, le=86400)
-
-class TokenIn(BaseModel):
-    new_token: str
 
 def check_ui_token(request: Request):
     if request.headers.get("X-UI-Token") != UI_TOKEN:
@@ -472,18 +475,13 @@ here — no need to edit any file.</p>
 <br><br><button onclick="saveSettings()">Save settings</button>
 <div class="msg" id="set-msg"></div></div>
 
-<h2>Secret token</h2>
-<div class="card"><p class="muted">The server and the two Tampermonkey scripts share one
-secret word. <b>After changing it here, you must put the same word in both
-scripts</b> (Tampermonkey dashboard &gt; script &gt; Settings &gt; <code>v5_token</code>),
-or the scripts stop working. Never post this word anywhere.</p>
-<p>Current token: <code id="token-masked">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</code>
-<button onclick="toggleToken()">Show</button>
-<button onclick="copyToken()">Copy</button></p>
-<label>New token (at least 16 characters)</label>
-<input id="new-token" style="width:95%" placeholder="a long random word of your own">
-<br><br><button onclick="changeToken()">Change token</button>
-<div class="msg" id="tok-msg"></div></div>
+<h2>What to buy</h2>
+<div class="card">
+<label><input type="radio" name="buy-mode" value="selected" checked> <b>Selected products only</b> — buy only the products listed below, at or under their max price.</label>
+<label><input type="radio" name="buy-mode" value="any"> <b>Any product, any price</b> — buy whatever product gets alerted, at whatever price it is. Use carefully: one alert = one purchase attempt.</label>
+<br><button onclick="setMode()">Save choice</button>
+<div class="msg" id="mode-msg"></div>
+<p class="muted" id="mode-note"></p></div>
 
 <h2>Recent alerts <button onclick="loadAll()">Refresh</button></h2>
 <div class="card"><table><thead><tr><th>Product</th><th>Price</th><th>Status</th><th>Time</th></tr></thead>
@@ -494,7 +492,6 @@ or the scripts stop working. Never post this word anywhere.</p>
 
 <script>
 const UI_TOKEN = "__UI_TOKEN__";
-let fullToken = "";
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = Object.assign({"X-UI-Token": UI_TOKEN, "Content-Type": "application/json"}, opts.headers || {});
@@ -510,7 +507,10 @@ async function loadAll(){
     document.getElementById("status").innerHTML = '<span class="ok">Running</span> — ' + st.pending + ' alert(s) waiting';
     document.getElementById("uptime").textContent = "Up for " + Math.floor(st.uptime_seconds/60) + " minute(s).";
     const cfg = await api("/api/config");
-    fullToken = cfg.secret_token || "";
+    document.querySelector('input[name="buy-mode"][value="' + (cfg.mode || "selected") + '"]').checked = true;
+    document.getElementById("mode-note").textContent = cfg.mode === "any"
+      ? "Any-product mode is ON — the list below is ignored, every Target alert will be queued."
+      : "Selected-products mode — only the products below will be bought, at or under their max price.";
     document.getElementById("set-dedupe").value = Math.round(cfg.dedupe_window_seconds/60);
     document.getElementById("set-ttl").value = Math.round(cfg.alert_ttl_seconds/60);
     document.getElementById("watchlist").innerHTML = cfg.watchlist.map(w =>
@@ -547,25 +547,15 @@ async function saveSettings(){
     msg.innerHTML = '<span class="ok">Settings saved.</span>';
   }catch(e){ msg.textContent = "Could not save: " + e.message; }
 }
-function toggleToken(){
-  const el = document.getElementById("token-masked");
-  if(el.textContent.indexOf("•") !== -1){ el.textContent = fullToken; }
-  else{ el.textContent = "••••••••"; }
-}
-function copyToken(){
-  if(navigator.clipboard && fullToken){ navigator.clipboard.writeText(fullToken); }
-  document.getElementById("tok-msg").textContent = "Token copied — paste it into both Tampermonkey scripts (v5_token).";
-}
-async function changeToken(){
-  const msg = document.getElementById("tok-msg");
-  const v = document.getElementById("new-token").value.trim();
-  if(v.length < 16){ msg.textContent = "The new token must be at least 16 characters."; return; }
-  if(!confirm("Change the secret token? You must then put the SAME token in both Tampermonkey scripts (v5_token), or the scripts stop working.")) return;
+async function setMode(){
+  const msg = document.getElementById("mode-msg");
+  const mode = document.querySelector('input[name="buy-mode"]:checked').value;
+  if(mode === "any" && !confirm("Any-product mode buys WHATEVER product gets alerted, at ANY price. Are you sure?")) { loadAll(); return; }
   try{
-    await api("/api/config/token", {method: "POST", body: JSON.stringify({new_token: v})});
-    msg.innerHTML = '<span class="warn">Token changed. Now put this same token in both Tampermonkey scripts (v5_token), then reload the Discord and Target tabs.</span>';
+    await api("/api/config/mode", {method: "POST", body: JSON.stringify({mode: mode})});
+    msg.innerHTML = '<span class="ok">Saved.</span>';
     loadAll();
-  }catch(e){ msg.textContent = "Could not change: " + e.message; }
+  }catch(e){ msg.textContent = "Could not save: " + e.message; }
 }
 loadAll(); setInterval(loadAll, 10000);
 </script></body></html>
@@ -580,14 +570,22 @@ def get_config(request: Request):
     check_ui_token(request)
     return {
         "ok": True,
+        "mode": BUY_MODE,
         "watchlist": [
             {"tcin": t, "name": w["name"], "max_price": w["max_price"]}
             for t, w in WATCHLIST.items()
         ],
         "dedupe_window_seconds": DEDUPE_WINDOW_SECONDS,
         "alert_ttl_seconds": ALERT_TTL_SECONDS,
-        "secret_token": SECRET_TOKEN,
     }
+
+@app.post("/api/config/mode")
+def set_buy_mode(payload: ModeIn, request: Request):
+    check_ui_token(request)
+    set_meta("buy_mode", payload.mode)
+    refresh_settings()
+    logger.info("dashboard: buy mode set to %s", BUY_MODE)
+    return {"ok": True, "mode": BUY_MODE}
 
 @app.post("/api/config/watchlist")
 def add_watchlist(payload: WatchlistAddIn, request: Request):
@@ -634,25 +632,9 @@ def update_settings(payload: SettingsIn, request: Request):
             "dedupe_window_seconds": DEDUPE_WINDOW_SECONDS,
             "alert_ttl_seconds": ALERT_TTL_SECONDS}
 
-@app.post("/api/config/token")
-def change_token(payload: TokenIn, request: Request):
-    check_ui_token(request)
-    new = payload.new_token.strip()
-    if len(new) < 16 or new.startswith("CHANGE-ME"):
-        raise HTTPException(status_code=400,
-                            detail="Token must be at least 16 characters")
-    set_meta("secret_token", new)
-    refresh_settings()
-    logger.info("dashboard: secret token changed (value not logged)")
-    return {"ok": True,
-            "warning": "Put this same token in both Tampermonkey scripts "
-                       "(v5_token), then reload the Discord and Target tabs."}
-
 if __name__ == "__main__":
     import uvicorn
-    logger.info("v5 server starting on %s:%d (watchlist: %s)",
-                HOST, PORT, ", ".join(WATCHLIST))
+    logger.info("v5 server starting on %s:%d (mode: %s, watchlist: %s)",
+                HOST, PORT, BUY_MODE, ", ".join(WATCHLIST))
     logger.info("dashboard: open http://127.0.0.1:%d/ in a browser", PORT)
-    logger.info("secret token (for the two Tampermonkey scripts, v5_token): %s",
-                SECRET_TOKEN)
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

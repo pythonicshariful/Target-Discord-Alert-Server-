@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Target Auto Buyer v5 (Discord Alert)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.2.0
-// @description  Watches the local v5 server for Discord restock alerts and buys ONLY the alerted product (TCIN-verified, price-capped, quantity 1). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
+// @version      5.3.0
+// @description  Watches the local v5 server for Discord restock alerts and buys the alerted product (TCIN-verified, quantity 1). Buy mode comes from the server dashboard: "Selected products" (watchlist + max price) or "Any product" (any product, any price). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://www.target.com/p/*
 // @match        https://www.target.com/cart*
@@ -39,7 +39,9 @@
  *     before every click.
  *   - Cart-drawer buttons are searched ONLY inside a visible dialog that
  *     belongs to this TCIN — never page-wide.
- *   - Price-cap guard: never buy above the watchlist max price.
+ *   - Price-cap guard (Selected-products mode only): never buy above
+ *     the watchlist max price. In "Any product" mode (picked in the
+ *     server dashboard) there is NO price cap — any product, any price.
  *   - Quantity is always 1. One alert = one purchase attempt max.
  *   - Place Order is clicked at most ONCE, only after the cart is checked
  *     to contain only the expected TCIN. Uncheck "Auto place order" in the
@@ -53,11 +55,14 @@
  * (Synthetic mouse events are isTrusted=false and cannot reliably pass;
  *  auto-solving was considered and declined on 2026-11-15.)
  *
- * WATCHLIST (must match the server's watchlist — set in its dashboard):
+ * WATCHLIST (the server dashboard is the source of truth; this copy is
+ * only a fallback if the server cannot be reached):
  *   1011407490  Booster Bundle Box    max $31.99
  *   1010892070  Knock Out Collection  max $11.99
  * The $79.99 Unova product from the sample screenshots is a SAMPLE ONLY
  * and is NOT in this list.
+ * In "Any product" mode (dashboard) the watchlist is ignored entirely:
+ * every alerted Target product is bought, at any price.
  *
  * No purchase is promised. A 2-minute stock window, a manual challenge
  * solve, or Target's own limits can still beat this script.
@@ -67,8 +72,8 @@
     'use strict';
 
     // ------------------------------------------------------------ config
+    // No token (v5.3.0): install the script, start the server, done.
     var SERVER_URL = (typeof GM_getValue === 'function' ? GM_getValue('v5_server_url', 'http://127.0.0.1:5000') : 'http://127.0.0.1:5000').replace(/\/$/, '');
-    var TOKEN = typeof GM_getValue === 'function' ? GM_getValue('v5_token', 'CHANGE-ME-replace-with-a-long-random-string') : 'CHANGE-ME-replace-with-a-long-random-string';
     var WATCHLIST = {
         '1011407490': { name: 'Booster Bundle Box', maxPrice: 31.99 },
         '1010892070': { name: 'Knock Out Collection', maxPrice: 11.99 }
@@ -87,6 +92,8 @@
         running: true,
         alert: null,            // current claimed alert object
         serverOnline: null,
+        serverMode: 'selected', // buy mode from the server dashboard: 'selected' | 'any'
+        serverWatchlist: null,  // {tcin: {name, maxPrice}} from /status, null until first check
         lastAlertAt: null,
         lastAction: '',
         atcRetries: 0,
@@ -128,9 +135,20 @@
     function getTabTcin() {
         return extractTcin();
     }
+    function isWatched(tcin) {
+        if (state.serverMode === 'any') return true; // any product counts
+        if (WATCHLIST[tcin]) return true;
+        return !!(state.serverWatchlist && state.serverWatchlist[tcin]);
+    }
     function getMaxPrice(tcin) {
-        var w = WATCHLIST[tcin || getTabTcin()];
+        if (state.serverMode === 'any') return 0; // no cap in Any-product mode
+        tcin = tcin || getTabTcin();
+        var w = (state.serverWatchlist && state.serverWatchlist[tcin]) || WATCHLIST[tcin];
         return w ? w.maxPrice : 0;
+    }
+    function getProductName(tcin) {
+        var w = (state.serverWatchlist && state.serverWatchlist[tcin]) || WATCHLIST[tcin];
+        return w ? w.name : (state.serverMode === 'any' ? 'Any product' : 'not in watchlist');
     }
     function getStoredCvv() {
         try { return (typeof GM_getValue === 'function' ? GM_getValue('v5_cvv', '') : '') || ''; } catch (e) { return ''; }
@@ -253,8 +271,8 @@
         panelEls.server.textContent = state.serverOnline === null ? '… checking …' : (state.serverOnline ? '🟢 connected' : '🔴 OFFLINE');
         panelEls.server.style.color = state.serverOnline ? '#4ade80' : '#f87171';
         var tcin = getTabTcin();
-        panelEls.tcin.textContent = tcin ? tcin + ' (' + (WATCHLIST[tcin] ? WATCHLIST[tcin].name : 'not in watchlist') + ')' : '— (not a product page)';
-        panelEls.max.textContent = tcin && WATCHLIST[tcin] ? WATCHLIST[tcin].maxPrice.toFixed(2) : '—';
+        panelEls.tcin.textContent = tcin ? tcin + ' (' + getProductName(tcin) + ')' : '— (not a product page)';
+        panelEls.max.textContent = state.serverMode === 'any' ? 'Any' : (tcin && getMaxPrice(tcin) > 0 ? getMaxPrice(tcin).toFixed(2) : '—');
         panelEls.lastAlert.textContent = state.lastAlertAt ? new Date(state.lastAlertAt).toLocaleTimeString() + ' — ' + (state.alert ? state.alert.title : '') : '—';
         panelEls.lastAction.textContent = state.lastAction || '—';
         panelEls.log.textContent = state.logLines.slice(-8).join('\n');
@@ -598,7 +616,7 @@
         return gmJson('GET', SERVER_URL + path);
     }
     function serverPost(path, body) {
-        return gmJson('POST', SERVER_URL + path, Object.assign({ token: TOKEN }, body));
+        return gmJson('POST', SERVER_URL + path, body);
     }
     function ackAlert(alertId, status, reason) {
         if (!alertId) return Promise.resolve(null);
@@ -607,7 +625,12 @@
     }
     function testServer(verbose) {
         return serverGet('/status').then(function (s) {
-            log('✅ Server OK — watchlist: ' + s.watchlist.map(function (w) { return w.tcin + ' ($' + w.max_price + ')'; }).join(', ') + ', pending: ' + s.pending);
+            state.serverOnline = true;
+            state.serverMode = s.mode || 'selected';
+            state.serverWatchlist = {};
+            (s.watchlist || []).forEach(function (w) { state.serverWatchlist[w.tcin] = { name: w.name, maxPrice: w.max_price }; });
+            renderPanel();
+            log('✅ Server OK — mode: ' + state.serverMode + ' — watchlist: ' + s.watchlist.map(function (w) { return w.tcin + ' ($' + w.max_price + ')'; }).join(', ') + ', pending: ' + s.pending);
             if (verbose) beep(2);
             return true;
         }).catch(function () {
@@ -621,10 +644,11 @@
         // The script then picks it up and runs the real ARMED flow — on an
         // out-of-stock page that ends in failed:gone_before_buy and buys nothing.
         var tcin = getTabTcin();
-        if (!tcin || !WATCHLIST[tcin]) { log('⚠️ Simulate: this page is not a watched product (TCIN ' + (tcin || 'none') + '). Open a watched product page first.'); return; }
+        if (!tcin || !isWatched(tcin)) { log('⚠️ Simulate: this page is not a watched product (TCIN ' + (tcin || 'none') + '). Open a watched product page first — or switch the dashboard to Any-product mode.'); return; }
+        var simPrice = getMaxPrice(tcin) > 0 ? getMaxPrice(tcin) : (getCurrentPrice() || 0);
         serverPost('/alert', {
-            source: 'v5-test', title: '[TEST] Simulated alert — ' + WATCHLIST[tcin].name,
-            price: WATCHLIST[tcin].maxPrice, qty: 'Test', retailer: 'Target',
+            source: 'v5-test', title: '[TEST] Simulated alert — ' + getProductName(tcin),
+            price: simPrice, qty: 'Test', retailer: 'Target',
             url: 'https://www.target.com/p/-/A-' + tcin, message_id: 'sim-' + Date.now()
         }).then(function (r) {
             log('🧪 Test alert posted: ' + JSON.stringify(r) + ' — the script will pick it up within ~1s.');
@@ -926,13 +950,15 @@
     function idleLoop() {
         if (!state.running || state.mode !== 'IDLE') return;
         var tcin = getTabTcin();
-        if (!tcin || !WATCHLIST[tcin]) {
-            // Not a watched product page: show the panel, wait for navigation.
+        if (!tcin || !isWatched(tcin)) {
+            // Not a watched product page (in Selected mode): show the
+            // panel, wait for navigation. In Any-product mode every
+            // product page is watched, so this branch is never taken.
             renderPanel();
             idleTimer = setTimeout(idleLoop, 2000);
             return;
         }
-        serverGet('/next?tcin=' + encodeURIComponent(tcin) + '&token=' + encodeURIComponent(TOKEN))
+        serverGet('/next?tcin=' + encodeURIComponent(tcin))
             .then(function (res) {
                 if (!state.running || state.mode !== 'IDLE') return;
                 if (res && res.status === 'pending' && res.alert) {
@@ -957,6 +983,9 @@
         buildPanel();
         renderPanel();
         testServer(false);
+        // Re-read the buy mode + watchlist from the server every 30s, so
+        // a dashboard change takes effect without reloading this tab.
+        setInterval(function () { testServer(false); }, 30000);
         var href = window.location.href;
         if (href.indexOf('/checkout') !== -1 || href.indexOf('/co-') !== -1) {
             setMode('ARMED');

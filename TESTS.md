@@ -6,7 +6,10 @@ re-verified again after the 2026-11-20 dashboard UI was added: server
 tests incl. new T11 UI checks 23/23, T6 9/9, T7 5/5 — all PASS;
 re-verified again after the 2026-11-21 no-config-file change (v5.2.0):
 server tests incl. new T12 no-config checks 26/26, T6 9/9, T7 5/5 —
-all PASS)
+all PASS;
+re-verified again after the 2026-11-21 token removal + buy modes
+(v5.3.0): server tests incl. new T14 mode checks 39/39, T6 9/9,
+T7 5/5, T9 5/5 (T9 with the server stopped, as designed) — all PASS)
 **Rule followed:** no test is marked passed unless it was actually run.
 Tests that need the live Discord channel, a real challenge, or an
 overnight soak are marked NOT RUN, not passed.
@@ -56,8 +59,9 @@ watched product at its real price.
 | T7 | Pending alert for the OTHER watched TCIN (1010892070) while the tab is on 1011407490: script stays IDLE, zero clicks, zero Target requests, the other alert stays pending (not stolen). | PASS (5/5 checks) |
 | T9 | Server stopped; Receiver fed a realistic Restockd embed in a fake Discord DOM: it parses the alert (title/price/link), retries the POST 3×, keeps the alert in its retry queue, panel shows 🔴 OFFLINE, zero Target requests. | PASS (5/5 checks) |
 | T11 | Dashboard UI (`GET /` + `/api/config`, added 2026-11-20 so a non-technical user never edits a file): page loads with a per-start UI token and the Add-product form; wrong UI token → 401; add product works, duplicate TCIN → 409, non-numeric TCIN → 400; settings update + restore works; remove product works and `/status` is back to the original two products afterwards. Token-change via the dashboard is NOT covered by automated tests (it would break the running test server's auth) — verify it manually once. | PASS (11/11 checks) |
-| T12 | No config file (v5.2.0, 2026-11-21): the server starts and serves with NO `config.json` / `config.example.json` anywhere — token + watchlist come from its own database (`alerts.db`, created automatically), and `/status` shows the seeded two products on a fresh database. The test harnesses fetch the token from the dashboard instead of a file. | PASS (3/3 checks) |
+| T12 | No config file (v5.2.0, 2026-11-21): the server starts and serves with NO `config.json` / `config.example.json` anywhere — watchlist + settings come from its own database (`alerts.db`, created automatically), and `/status` shows the seeded two products on a fresh database. (v5.3.0 also removed the token, so nothing is fetched from the dashboard at all.) | PASS (3/3 checks) |
 | T13 | Receiver message-id fix (v5.2.1, 2026-11-21): `messageIdOf` took the FIRST 17–20 digit run from `data-list-item-id`, which is the CHANNEL id (`chat-messages-<channelId>-<messageId>`) — after the first alert, every later message in the same channel would be silently skipped as "already processed". Verified against the real id format from the live test message (channel 1573320752499916810, two different message ids): the fix returns the MESSAGE id, different per message. The live test message itself parsed fine (embed title/price/link all present in the DOM); the failure was downstream, see the checklist in the README's T5 section. | PASS (1/1 check) |
+| T14 | Token removed + buy modes (v5.3.0, 2026-11-21): the token is gone everywhere — server starts and serves with no token, `/alert` and `/ack` take no token field (a stray `token` field is ignored), `/api/config` returns no `secret_token`, and the dashboard has no token section. Buy mode, picked in the dashboard (`/api/config/mode`): default `selected`; in `any` mode an unwatched TCIN at $999.99 queues, a watched TCIN over its cap queues, dedupe still ignores repeats, an invalid mode is rejected, and switching back to `selected` restores the watchlist filter (unwatched TCIN ignored again). The buyer script reads the mode from `/status` (refreshed every 30s) and skips the price cap in `any` mode. (One real defect caught by this test: the dedupe check lived inside the `else` branch, so `any` mode skipped it — fixed so dedupe runs in both modes, then all 11/11 checks passed.) | PASS (11/11 checks) |
 
 ### NOT RUN (need live conditions — not claimed as passed)
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Discord Receiver v5 (Restockd Alerts)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.2.1
+// @version      5.3.0
 // @description  Reads Restockd restock alerts in the buyer's own Discord tab (#pokemon-target) and forwards them to the local v5 server (http://127.0.0.1:5000). No self-bot, no user-token login — it only reads what the buyer's own logged-in Discord tab already shows. Filtering (watchlist / price cap / dedupe) happens server-side.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://discord.com/channels/*
@@ -38,7 +38,7 @@
  *
  * SETTINGS (Tampermonkey dashboard > this script > Settings, or the panel):
  *   v5_server_url : http://127.0.0.1:5000   (the local server)
- *   v5_token      : must match the server's secret token (dashboard > Secret token)
+ * No token, no password — just install the script and keep the tab open.
  *
  * No purchase is promised by this script. A forwarded alert only means
  * "Restockd posted about a product" — stock can still be gone by the
@@ -49,7 +49,6 @@
     'use strict';
 
     var SERVER_URL = (typeof GM_getValue === 'function' ? GM_getValue('v5_server_url', 'http://127.0.0.1:5000') : 'http://127.0.0.1:5000').replace(/\/$/, '');
-    var TOKEN = typeof GM_getValue === 'function' ? GM_getValue('v5_token', 'CHANGE-ME-replace-with-a-long-random-string') : 'CHANGE-ME-replace-with-a-long-random-string';
     var SCAN_INTERVAL_MS = 2000;
     var POST_RETRIES = 3;
     var POST_RETRY_DELAY_MS = 1000;
@@ -244,7 +243,7 @@
 
     // ------------------------------------------------------------ server POST
     function postAlert(alert, attempt, onDone) {
-        var payload = Object.assign({ token: TOKEN }, alert);
+        var payload = alert; // no token (v5.3.0): the server takes any alert from this PC
         var done = function (ok, resp) {
             if (ok) {
                 serverOnline = true;

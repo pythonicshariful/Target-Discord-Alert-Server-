@@ -3,7 +3,7 @@
 Target Auto-Buy v5 — a Discord-alert-driven auto-purchase system for
 Target.com.
 
-**Version:** 5.2.1 — 2026-11-21
+**Version:** 5.3.0 — 2026-11-21
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 
@@ -48,38 +48,38 @@ and is deliberately NOT watched.
    the dependencies (FastAPI + uvicorn). A black window opens —
    **keep it open** while the bot runs — and the **dashboard opens in
    your browser** at `http://127.0.0.1:5000/`.
-4. **Set the same token in the two Tampermonkey scripts (once):** in
-   the dashboard, go to the **Secret token** section, click **Show**
-   then **Copy**. Then in Chrome: Tampermonkey dashboard > each script
-   > Settings tab > find `v5_token` > paste the token > Save. Do this
-   for **both** scripts. The server and the scripts must use the same
-   token, or the server rejects the scripts. Never post the token
-   anywhere. (The token is also printed in the black server window.)
-5. Check it works: in the dashboard you should see **Running** and the
+4. Check it works: in the dashboard you should see **Running** and the
    two watched products. (Or open `http://127.0.0.1:5000/health` — you
    should see `{"ok":true}`.)
 
-> **There is no config file.** The server keeps everything (secret
-> token, watched products, settings) in its own database file,
+> **There is no config file and no token.** The server keeps everything
+> (watched products, buy mode, settings) in its own database file,
 > `server/alerts.db`, created automatically on first start. You never
-> edit a file. If you have old `config.json` / `config.example.json`
-> files from an earlier version, delete them — the server does not use
-> them.
+> edit a file and never copy anything anywhere — install the two
+> scripts, start the server, done. If you have old `config.json` /
+> `config.example.json` files from an earlier version, delete them —
+> the server does not use them.
 >
-> **Updating from v5.1.0:** the token is new this once — copy it from
-> the dashboard (Step 4) into both scripts again. After that it stays
-> the same across restarts.
+> **Updating from v5.2.x:** just replace the two scripts and restart
+> the server — the token is gone, there is nothing to copy. The server
+> deletes the old token from its own database by itself.
 
 ### Step 1b — Manage products in the dashboard (no file editing)
 
 Everything about **which products the bot buys** is done in the
 dashboard at `http://127.0.0.1:5000/`:
 
+- **What to buy** — pick one of the two options, then click
+  **Save choice**:
+  - **Selected products only** — buy only the products listed below,
+    one item each, at or under their max price.
+  - **Any product, any price** — buy whatever product gets alerted, at
+    whatever price it is. The list below is ignored. Use carefully:
+    one alert = one purchase attempt, at any price.
 - **Add a product:** type its name, its TCIN (numbers only — find it
   on target.com: open the product page, the TCIN is the number after
   `/A-` in the address), and the max price you will pay. Click **Add
-  product**. The bot buys only listed products, one item each, at or
-  under the max price.
+  product**. (Only used in Selected-products mode.)
 - **Remove a product:** click **Remove** next to it. The bot stops
   buying it immediately.
 - **Settings:** change how long a repeat alert is ignored, and how
@@ -194,11 +194,10 @@ tells the truth:
    `start-server.bat`). If the panel says 🔴 OFFLINE, the alert is
    stuck in the Receiver's retry queue — start the server and it
    flushes within 30 seconds.
-4. **The token must match.** The token changed in v5.2.0 — after
-   updating, copy the NEW token from the dashboard (Secret token →
-   Show → Copy) into BOTH scripts (`v5_token`). A wrong token makes
-   the server reject every alert (401); the panel shows Failed going
-   up, exactly like the server being down.
+4. **The buy mode.** If the alert shows as `ignored: not_watched` on
+   `http://127.0.0.1:5000/alerts`, the product is not in the watchlist
+   — either add it in the dashboard, or switch **What to buy** to
+   **Any product, any price**.
 5. **What the panel numbers mean:** Sent = alerts forwarded to the
    server; Queued by server = the server accepted them; Failed =
    rejected or unreachable; Retry queue = waiting to try again.
@@ -219,17 +218,16 @@ tells the truth:
 
 - v5 will place an order by itself when everything checks out — that is
   what an auto-buy bot is for. It only ever buys the alerted TCIN,
-  quantity 1, at or under its max price, and only after the cart check.
+  quantity 1, at or under its max price (in Selected-products mode; in
+  Any-product mode, at any price), and only after the cart check.
   If you are not comfortable with that, uncheck "Auto place order" and
   click it yourself.
 - Never buy a CAPTCHA solver for this: NopeCHA / 2Captcha do not solve
   Target's PerimeterX Press & Hold.
-- The server binds to `127.0.0.1` only and is not reachable from the
-  internet. The secret token (shown in the dashboard, also printed in
-  the server window) is shared with the two Tampermonkey scripts
-  (Tampermonkey dashboard > script settings > `v5_token` /
-  `v5_server_url`). If you change it, change it in all three places.
-  Do not post the token anywhere.
+- No token, no password anywhere. The server binds to `127.0.0.1`
+  only, is not reachable from the internet, and only Discord and
+  Target pages can call it from a browser — a random website cannot
+  trigger a purchase.
 - If Discord changes its page layout, the Receiver may stop parsing
   alerts (its panel will keep showing the old counts). Tell Shariful —
   the parser is the part that needs maintenance.
@@ -245,14 +243,14 @@ Target-Discord-Alert-Server-/
 │   ├── server.py            Piece 1 — FastAPI server (127.0.0.1:5000)
 │   ├── requirements.txt     fastapi + uvicorn
 │   ├── start-server.bat     Double-click starter (Windows)
-│   ├── alerts.db            Created on first run (SQLite: alerts + token +
-│   │                        watchlist + settings, gitignored)
+│   ├── alerts.db            Created on first run (SQLite: alerts +
+│   │                        watchlist + buy mode + settings, gitignored)
 │   └── server.log           Created on first run (rotating log, gitignored)
 ├── tampermonkey/
 │   ├── Target Discord Receiver.user.js                  Piece 2
 │   └── Target Auto Buyer v5 (Discord Alert).user.js     Piece 3
 ├── tests/
-│   ├── run_server_tests.py      T1–T4 + auth/ack checks (needs server up)
+│   ├── run_server_tests.py      T1–T4 + T11/T12/T14 (needs server up)
 │   ├── run_browser_tests.js     T6/T7/T9 jsdom harness (needs node + jsdom)
 │   └── sample-alert-webhook.json  Restockd-style test alert for your own server
 ├── README.md                This file
@@ -261,7 +259,7 @@ Target-Discord-Alert-Server-/
 
 There is no config file in this repo on purpose — the server creates
 its own database (`server/alerts.db`) on first start and keeps the
-secret token there. Never post the token anywhere.
+watchlist, buy mode and settings there.
 
 ## If something goes wrong
 

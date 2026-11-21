@@ -24,18 +24,7 @@ const { JSDOM } = require('jsdom');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = 'http://127.0.0.1:5000';
-// No config file (v5.2.0): the token is fetched from the dashboard at
-// runtime, exactly as a browser would — GET / for the per-start UI token,
-// then GET /api/config with it.
-let TOKEN = null;
-async function fetchServerToken() {
-  const html = await (await fetch(SERVER + '/')).text();
-  const uiToken = /const UI_TOKEN = "([^"]+)"/.exec(html)[1];
-  const cfg = await (await fetch(SERVER + '/api/config', {
-    headers: { 'X-UI-Token': uiToken },
-  })).json();
-  return cfg.secret_token;
-}
+// No config file, no token (v5.3.0): /alert takes no token at all.
 const TEST = process.argv[2];
 const FAILURES = [];
 let targetFetches = 0; // counts any fetch() to a target.com / redsky host
@@ -56,7 +45,7 @@ async function httpJson(method, urlPath, body) {
 }
 
 function makeGmStubs(window) {
-  const store = { v5_token: TOKEN, v5_server_url: SERVER };
+  const store = { v5_server_url: SERVER };
   return {
     GM_getValue: (k, d) => (k in store ? store[k] : d),
     GM_setValue: (k, v) => { store[k] = v; },
@@ -105,7 +94,7 @@ function countingFetch(window) {
 async function testT6() {
   // Fresh pending alert for 1011407490 at its real price.
   const { status, json } = await httpJson('POST', '/alert', {
-    token: TOKEN, source: 'v5-test', title: '[TEST T6] Booster Bundle Box',
+    source: 'v5-test', title: '[TEST T6] Booster Bundle Box',
     price: 31.99, qty: 'Pre-Order', retailer: 'Target',
     url: 'https://www.target.com/p/-/A-1011407490', message_id: 't6-' + Date.now(),
   });
@@ -173,7 +162,7 @@ async function testT6() {
 async function testT7() {
   // Pending alert for the OTHER watched TCIN (1010892070) only.
   const { status, json } = await httpJson('POST', '/alert', {
-    token: TOKEN, source: 'v5-test', title: '[TEST T7] Knock Out Collection',
+    source: 'v5-test', title: '[TEST T7] Knock Out Collection',
     price: 11.99, qty: 'Pre-Order', retailer: 'Target',
     url: 'https://www.target.com/p/-/A-1010892070', message_id: 't7-' + Date.now(),
   });
@@ -253,7 +242,6 @@ async function testT9() {
 // ---------------------------------------------------------------- main
 (async () => {
   try {
-    if (TEST === 't6' || TEST === 't7') TOKEN = await fetchServerToken();
     if (TEST === 't6') await testT6();
     else if (TEST === 't7') await testT7();
     else if (TEST === 't9') await testT9();
