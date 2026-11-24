@@ -12,7 +12,10 @@ re-verified again after the 2026-11-21 token removal + buy modes
 T7 5/5, T9 5/5 (T9 with the server stopped, as designed) — all PASS;
 re-verified again after the 2026-11-21 any-page + auto-navigate change
 (v5.4.0): server tests incl. new T15 /next-any checks 47/47, T6 9/9,
-T7 5/5 (rewritten for the navigate behavior), T9 5/5 — all PASS)
+T7 5/5 (rewritten for the navigate behavior), T9 5/5 — all PASS;
+re-verified again after the 2026-11-24 real-message fix (v5.4.2):
+server tests incl. new T17 howl-redirect checks 56/56, T16 real-channel
+HTML 7/7, T6 9/9, T7 5/5 — all PASS)
 **Rule followed:** no test is marked passed unless it was actually run.
 Tests that need the live Discord channel, a real challenge, or an
 overnight soak are marked NOT RUN, not passed.
@@ -34,6 +37,10 @@ NODE_PATH=<path-to-jsdom>/node_modules node tests/run_browser_tests.js t6
 NODE_PATH=<path-to-jsdom>/node_modules node tests/run_browser_tests.js t7
 # T9 needs the server STOPPED:
 NODE_PATH=<path-to-jsdom>/node_modules node tests/run_browser_tests.js t9
+
+# T16 — Receiver against the real Restockd channel HTML (needs the pasted
+# file at ~/workspace/user/files/pasted-text.txt, no server needed):
+NODE_PATH=<path-to-jsdom>/node_modules node tests/check-real-discord-html.js
 ```
 
 ## Results (2026-11-20, final code)
@@ -66,6 +73,8 @@ watched product at its real price.
 | T13 | Receiver message-id fix (v5.2.1, 2026-11-21): `messageIdOf` took the FIRST 17–20 digit run from `data-list-item-id`, which is the CHANNEL id (`chat-messages-<channelId>-<messageId>`) — after the first alert, every later message in the same channel would be silently skipped as "already processed". Verified against the real id format from the live test message (channel 1573320752499916810, two different message ids): the fix returns the MESSAGE id, different per message. The live test message itself parsed fine (embed title/price/link all present in the DOM); the failure was downstream, see the checklist in the README's T5 section. | PASS (1/1 check) |
 | T14 | Token removed + buy modes (v5.3.0, 2026-11-21): the token is gone everywhere — server starts and serves with no token, `/alert` and `/ack` take no token field (a stray `token` field is ignored), `/api/config` returns no `secret_token`, and the dashboard has no token section. Buy mode, picked in the dashboard (`/api/config/mode`): default `selected`; in `any` mode an unwatched TCIN at $999.99 queues, a watched TCIN over its cap queues, dedupe still ignores repeats, an invalid mode is rejected, and switching back to `selected` restores the watchlist filter (unwatched TCIN ignored again). The buyer script reads the mode from `/status` (refreshed every 30s) and skips the price cap in `any` mode. (One real defect caught by this test: the dedupe check lived inside the `else` branch, so `any` mode skipped it — fixed so dedupe runs in both modes, then all 11/11 checks passed.) | PASS (11/11 checks) |
 | T15 | `/next-any` + auto-navigate (v5.4.0, 2026-11-21): new server endpoint returns the OLDEST pending alert for ANY TCIN (then the next one after the first is claimed, then none when nothing is pending). The buyer now runs on any `target.com` page (`@match https://www.target.com/*`) and polls `/next-any`; when an alert arrives it claims it and opens that product's page itself (runArmedClaimed's existing navigate branch, now live; boot() also navigates if a claimed alert is saved but the tab landed on the wrong page). First tab to see an alert claims it — other tabs stand down via the 409 claim check. | PASS (8/8 checks) |
+| T16 | Real Restockd channel HTML (v5.4.2, 2026-11-24): the Receiver was run in jsdom against the REAL `#pokemon-target` HTML the user pasted (Nov 6–13 messages). It forwarded 28 alerts. Before the fix the URLs were `howl.link` redirects and the parsed fields were wrong (`retailer` = "TargetView on TargetOpen productTime", `qty` = ">= 10RetailerTargetView on TargetOpen pr"). After the fix every alert carries the REAL product URL (`https://www.target.com/p/-/A-…`), `retailer` is exactly "Target", `qty` is ">= 10" or "Pre-Order", and every price is a number. | PASS (7/7 checks) |
+| T17 | howl.link redirect unwrap (v5.4.2, 2026-11-24): a watched TCIN posted with a real howl.link URL queues (TCIN read through the redirect) and the stored + `/next-any` URL is the real product page, not howl.link. An unwatched TCIN via howl URL is ignored `not_watched` in selected mode (by design — the dashboard's Any-product mode is the switch for it) and queues in any-mode. | PASS (8/8 checks) |
 
 ### NOT RUN (need live conditions — not claimed as passed)
 

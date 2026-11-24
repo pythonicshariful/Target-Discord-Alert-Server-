@@ -197,6 +197,32 @@ TCIN_PATTERNS = [
     re.compile(r"(\d{10})"),  # last resort: a bare 10-digit TCIN in the URL
 ]
 
+def unwrap_redirect_url(url: Optional[str]) -> Optional[str]:
+    """Real Restockd links go through a tracking redirect:
+    https://howl.link/link/?url=<url-encoded target URL>&publisher_slug=...
+    (v5.4.2, from the real Nov 6 channel HTML). Unwrap the ``url`` param so
+    the stored alert URL — and the URL the buyer navigates to — is the real
+    product page, not the redirect (slower, and ad-blockers often block
+    howl.link outright). Defense in depth: the Receiver unwraps too, but an
+    old Receiver posting a howl URL must still work. Anything else passes
+    through unchanged."""
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlparse, parse_qs, unquote
+        parts = urlparse(url)
+        inner = parse_qs(parts.query).get("url", [None])[0]
+        if not inner:
+            return url
+        for _ in range(2):
+            inner = unquote(inner)
+        if "target.com" in inner:
+            return inner
+    except Exception:
+        pass
+    return url
+
+
 def extract_tcin(url: Optional[str], explicit: Optional[str] = None) -> Optional[str]:
     if explicit and re.fullmatch(r"\d{6,}", str(explicit).strip()):
         return str(explicit).strip()
@@ -257,7 +283,7 @@ class ModeIn(BaseModel):
     mode: str = Field(pattern="^(selected|any)$")
 
 # ---------------------------------------------------------------- app
-app = FastAPI(title="Target Discord-Alert Server v5", version="5.4.0")
+app = FastAPI(title="Target Discord-Alert Server v5", version="5.4.2")
 app.add_middleware(
     CORSMiddleware,
     # Only Discord and Target pages may call this server from a browser.
@@ -293,7 +319,8 @@ def status():
 @app.post("/alert")
 def post_alert(payload: AlertIn):
     now = time.time()
-    tcin = extract_tcin(payload.url, payload.tcin)
+    url = unwrap_redirect_url(payload.url)
+    tcin = extract_tcin(url, payload.tcin)
     price = parse_price(payload.price)
     raw = payload.model_dump_json()
 
@@ -324,7 +351,7 @@ def post_alert(payload: AlertIn):
                (title, price, qty, retailer, url, tcin, source, discord_time,
                 message_id, raw_json, status, reason, received_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (payload.title, price, payload.qty, payload.retailer, payload.url,
+            (payload.title, price, payload.qty, payload.retailer, url,
              tcin, payload.source, payload.discord_time, payload.message_id,
              raw, status, reason, now),
         )

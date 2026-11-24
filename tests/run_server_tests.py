@@ -322,6 +322,70 @@ s, r = call("GET", "/next-any")
 check("T15 /next-any is none when nothing is pending",
       s == 200 and r.get("status") == "none", f"HTTP {s} {r}")
 
+# --- T17: howl.link redirect unwrap (v5.4.2) — real Restockd messages link
+# --- through https://howl.link/link/?url=<encoded target URL>&publisher_slug=…
+# --- (found in the real Nov 6 channel HTML the user pasted, 2026-11-24).
+# --- The server must store + serve the REAL product URL, and the TCIN must
+# --- come from it. Selected mode still ignores unwatched products — that is
+# --- by design (the dashboard's Any-product mode is the switch for them). ---
+HOWL_WATCHED = ("https://howl.link/link/?url=https%3A%2F%2Fwww.target.com%2Fp%2F-%2FA-1011407490"
+                "&publisher_slug=restockdping&article_name=Restockd+Discord"
+                "&article_url=https%3A%2F%2Frestockd.app&u1=discord")
+HOWL_UNWATCHED = ("https://howl.link/link/?url=https%3A%2F%2Fwww.target.com%2Fp%2F-%2FA-1012793604"
+                  "&publisher_slug=restockdping&article_name=Restockd+Discord"
+                  "&article_url=https%3A%2F%2Frestockd.app&u1=discord")
+s, r = call("POST", "/alert", {
+    "source": "restockd-discord",
+    "title": "Pokémon TCG 30th Celebration Booster Bundle Box | Target",
+    "price": 31.99, "qty": "Pre-Order", "retailer": "Target",
+    "url": HOWL_WATCHED,
+    "message_id": "test-msg-howl-1",
+})
+check("T17 watched TCIN via howl URL is queued (TCIN read through the redirect)",
+      s == 200 and r.get("status") == "queued" and r.get("tcin") == "1011407490",
+      f"HTTP {s} {r}")
+howl_id = r.get("alert_id")
+s, r = call("GET", "/alerts?limit=5")
+stored = [a for a in r.get("alerts", []) if a.get("id") == howl_id]
+check("T17 stored alert URL is the REAL product URL, not howl.link",
+      len(stored) == 1 and stored[0].get("url") == "https://www.target.com/p/-/A-1011407490",
+      f"HTTP {s} {r}")
+s, r = call("GET", "/next-any")
+check("T17 /next-any serves the alert with the real product URL",
+      s == 200 and r.get("alert", {}).get("url") == "https://www.target.com/p/-/A-1011407490",
+      f"HTTP {s} {r}")
+s, r = call("POST", "/alert", {
+    "source": "restockd-discord",
+    "title": "Pokémon Trading Card Game: Mega Evolution Elite Trainer Box | Target",
+    "price": 59.99, "qty": ">= 10", "retailer": "Target",
+    "url": HOWL_UNWATCHED,
+    "message_id": "test-msg-howl-2",
+})
+check("T17 unwatched TCIN via howl URL is ignored in selected mode (not_watched)",
+      s == 200 and r.get("status") == "ignored" and r.get("reason") == "not_watched",
+      f"HTTP {s} {r}")
+s, r = ui_call("POST", "/api/config/mode", {"mode": "any"})
+check("T17 switch to any-product mode", s == 200 and r.get("mode") == "any",
+      f"HTTP {s} {r}")
+s, r = call("POST", "/alert", {
+    "source": "restockd-discord",
+    "title": "Pokémon Trading Card Game: Mega Evolution Elite Trainer Box | Target",
+    "price": 59.99, "qty": ">= 10", "retailer": "Target",
+    "url": HOWL_UNWATCHED,
+    "message_id": "test-msg-howl-3",
+})
+check("T17 unwatched TCIN via howl URL is queued in any-mode",
+      s == 200 and r.get("status") == "queued" and r.get("tcin") == "1012793604",
+      f"HTTP {s} {r}")
+any_id = r.get("alert_id")
+s, r = call("POST", "/ack", {"alert_id": howl_id, "status": "failed", "reason": "cleanup"})
+check("T17 cleanup: watched howl alert acked", s == 200, f"HTTP {s} {r}")
+s, r = call("POST", "/ack", {"alert_id": any_id, "status": "failed", "reason": "cleanup"})
+check("T17 cleanup: any-mode howl alert acked", s == 200, f"HTTP {s} {r}")
+s, r = ui_call("POST", "/api/config/mode", {"mode": "selected"})
+check("T17 switch back to selected mode",
+      s == 200 and r.get("mode") == "selected", f"HTTP {s} {r}")
+
 print()
 if FAILURES:
     print(f"RESULT: {len(FAILURES)} FAILURE(S): {FAILURES}")

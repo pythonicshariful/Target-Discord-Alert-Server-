@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Auto Buyer v5 (Discord Alert)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.4.0
+// @version      5.4.2
 // @description  Watches the local v5 server for Discord restock alerts and buys the alerted product (TCIN-verified, quantity 1). Runs on ANY target.com page — when an alert arrives it opens that product's page itself and starts the purchase. Buy mode comes from the server dashboard: "Selected products" (watchlist + max price) or "Any product" (any product, any price). While waiting it makes ZERO requests to Target. Separate file — the v4.4 script is not edited or imported.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://www.target.com/*
@@ -134,6 +134,25 @@
     }
     function getTabTcin() {
         return extractTcin();
+    }
+
+    // v5.4.2: real Restockd links go through a howl.link tracking redirect.
+    // The Receiver and the server unwrap it, but defend here too — if an
+    // old Receiver ever hands this script a howl URL, navigate to the real
+    // product URL instead of the redirect (slower, and ad-blockers often
+    // block howl.link outright).
+    function unwrapRedirectUrl(href) {
+        if (!href) return href;
+        try {
+            var u = new URL(href);
+            var inner = u.searchParams.get('url');
+            if (!inner) return href;
+            for (var i = 0; i < 2; i++) {
+                try { inner = decodeURIComponent(inner); } catch (e) { break; }
+            }
+            if (inner.indexOf('target.com') !== -1) return inner;
+        } catch (e) { /* not a parseable URL — pass through */ }
+        return href;
     }
     function isWatched(tcin) {
         if (state.serverMode === 'any') return true; // any product counts
@@ -885,12 +904,13 @@
         var tcin = alert.tcin;
         // 1. Be on the right product page.
         if (getTabTcin() !== tcin) {
-            if (!alert.url || alert.url.indexOf('target.com') === -1 || (alert.url.match(/A-(\d+)/) || [])[1] !== tcin) {
+            var targetUrl = unwrapRedirectUrl(alert.url);
+            if (!targetUrl || targetUrl.indexOf('target.com') === -1 || (targetUrl.match(/A-(\d+)/) || [])[1] !== tcin) {
                 log('⚠️ Alert URL does not match TCIN ' + tcin + ' — aborting (never navigate to an unverified URL).');
                 return failCurrentAlert('price_or_tcin_mismatch').then(function () { return false; });
             }
             log('Navigating to the alerted product page…');
-            window.location.href = alert.url;
+            window.location.href = targetUrl;
             return Promise.resolve('navigating');
         }
         // 2. Challenge check FIRST.

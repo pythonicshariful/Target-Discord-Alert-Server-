@@ -1,8 +1,12 @@
 # Target Auto-Buy v5 — Setup Guide (for non-technical users)
 
-**Version:** 5.4.0 — 2026-11-21
-**Guide updated:** 2026-11-21 — rewritten step by step for non-technical
+**Version:** 5.4.2 — 2026-11-24
+**Guide updated:** 2026-11-24 — rewritten step by step for non-technical
 users (Windows + Mac).
+**What changed in 5.4.2:** real Restockd messages link through a tracking
+redirect (`howl.link`) — the bot now opens the real product page instead, so
+it starts properly on a real alert. Also fixed the price/quantity reading
+from real messages.
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Target Discord Receiver v5 (Restockd Alerts)
 // @namespace    https://pythonicshariful.tech/
-// @version      5.3.0
+// @version      5.4.2
 // @description  Reads Restockd restock alerts in the buyer's own Discord tab (#pokemon-target) and forwards them to the local v5 server (http://127.0.0.1:5000). No self-bot, no user-token login — it only reads what the buyer's own logged-in Discord tab already shows. Filtering (watchlist / price cap / dedupe) happens server-side.
 // @author       Shariful Islam (pythonicshariful)
 // @match        https://discord.com/channels/*
@@ -137,19 +137,45 @@
             }
         }
         // Fallbacks when labels/values run together on one line.
+        // NOTE (v5.4.2): in the real Discord DOM the embed fields run
+        // together with NO separator — "Price$59.99Qty>= 10RetailerTargetView
+        // on TargetOpen product…" — so a loose value regex swallows the
+        // NEXT field's label ("TargetView on TargetOpen productTime").
+        // Every fallback below therefore stops at the next known label.
         if (out.price === null) {
             var pm = text.match(/Price\s*\$?\s*([\d,]+\.\d{2})/i);
             if (pm) out.price = parseFloat(pm[1].replace(/,/g, ''));
         }
         if (!out.qty) {
-            var qm = text.match(/Qty\s*(Pre-Order|In Stock|Out of Stock|[^\n]{1,40})/i);
+            var qm = text.match(/Qty\s*(Pre-Order|In Stock|Out of Stock|>=?\s*\d+)/i);
             if (qm) out.qty = qm[1].trim();
         }
         if (!out.retailer) {
-            var rm = text.match(/Retailer\s*([A-Za-z ]+)/i);
+            var rm = text.match(/Retailer\s*([A-Za-z]+?)(?=View on Target|Time|Links|Price|Qty|$)/i);
             if (rm) out.retailer = rm[1].trim();
         }
         return out;
+    }
+
+    // Real Restockd links are NOT direct target.com links — they go through
+    // a tracking redirect: https://howl.link/link/?url=<url-encoded
+    // target URL>&publisher_slug=restockdping… (v5.4.2, from the real Nov 6
+    // channel HTML). The buyer must navigate to the REAL product URL, not
+    // the redirect — the redirect is slower and ad-blockers often block
+    // howl.link outright. Unwrap the "url" query param (decode twice, the
+    // value is sometimes double-encoded); anything else passes through.
+    function unwrapRedirectUrl(href) {
+        if (!href) return href;
+        try {
+            var u = new URL(href);
+            var inner = u.searchParams.get('url');
+            if (!inner) return href;
+            for (var i = 0; i < 2; i++) {
+                try { inner = decodeURIComponent(inner); } catch (e) { break; }
+            }
+            if (inner.indexOf('target.com') !== -1) return inner;
+        } catch (e) { /* not a parseable URL — pass through */ }
+        return href;
     }
 
     function findOpenProductLink(root) {
@@ -232,7 +258,7 @@
                 price: parsed.price,
                 qty: parsed.qty,
                 retailer: parsed.retailer || 'Target',
-                url: link.getAttribute('href'),
+                url: unwrapRedirectUrl(link.getAttribute('href')),
                 discord_time: (node.querySelector('time') || {}).getAttribute ? (node.querySelector('time').getAttribute('datetime') || null) : null,
                 message_id: mid
             };
