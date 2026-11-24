@@ -35,6 +35,47 @@ def check(name, cond, detail=""):
         FAILURES.append(name)
 
 
+# --- Setup: the dashboard page carries a per-start UI token; extract it
+# --- from the HTML exactly as a browser would, then use it for the config
+# --- calls (mode switches below). ---
+import re
+import urllib.request as _urlreq
+try:
+    with _urlreq.urlopen(BASE + "/", timeout=10) as resp:
+        html = resp.read().decode()
+        m = re.search(r'const UI_TOKEN = "([^"]+)"', html)
+        ui_token = m.group(1) if m else ""
+    check("T11 dashboard page loads with UI token", bool(ui_token), f"token found: {bool(ui_token)}")
+    check("T11 dashboard page has Add product form",
+          "Add a product" in html and "Watched products" in html)
+except Exception as e:  # noqa: BLE001 - test harness reports it as a failure
+    ui_token = ""
+    check("T11 dashboard page loads with UI token", False, str(e))
+
+def ui_call(method, path, body=None):
+    req = _urlreq.Request(
+        BASE + path, method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json", "X-UI-Token": ui_token},
+    )
+    try:
+        with _urlreq.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+
+# --- T14a: default buy mode is "any" (v5.4.3). T2/T3 below test the
+# --- watchlist filter + price cap, which only apply in "selected" mode,
+# --- so switch to "selected" first and switch back at the end of T14. ---
+s, r = call("GET", "/status")
+check("T14 default mode is any",
+      s == 200 and r.get("mode") == "any", f"HTTP {s} {r}")
+if ui_token:
+    s, r = ui_call("POST", "/api/config/mode", {"mode": "selected"})
+    check("T14 setup: switch to selected mode for the filter tests",
+          s == 200 and r.get("mode") == "selected", f"HTTP {s} {r}")
+
+
 # --- T1: server receives + parses a watched alert (Nov 13 Restockd format,
 # --- but with a WATCHED product at its real price — the $79.99 in the sample
 # --- screenshots belongs to the Unova product, which is NOT watched) ---
@@ -130,33 +171,8 @@ check("ack: claimed -> failed",
       s == 200 and r.get("status") == "failed", f"HTTP {s} {r}")
 
 # --- T11: dashboard UI (GET / page + /api/config) ---
-# The dashboard page carries a per-start UI token; extract it from the
-# HTML exactly as a browser would, then use it for the config calls.
-import re
-import urllib.request as _urlreq
-try:
-    with _urlreq.urlopen(BASE + "/", timeout=10) as resp:
-        html = resp.read().decode()
-        m = re.search(r'const UI_TOKEN = "([^"]+)"', html)
-        ui_token = m.group(1) if m else ""
-    check("T11 dashboard page loads with UI token", bool(ui_token), f"token found: {bool(ui_token)}")
-    check("T11 dashboard page has Add product form",
-          "Add a product" in html and "Watched products" in html)
-except Exception as e:  # noqa: BLE001 - test harness reports it as a failure
-    ui_token = ""
-    check("T11 dashboard page loads with UI token", False, str(e))
-
-def ui_call(method, path, body=None):
-    req = _urlreq.Request(
-        BASE + path, method=method,
-        data=json.dumps(body).encode() if body is not None else None,
-        headers={"Content-Type": "application/json", "X-UI-Token": ui_token},
-    )
-    try:
-        with _urlreq.urlopen(req, timeout=10) as r:
-            return r.status, json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+# (UI token already extracted in the setup block at the top of this file;
+# mode is "selected" here — switched there for the T2/T3 filter tests.)
 
 if ui_token:
     s, r = ui_call("GET", "/api/config")
@@ -168,7 +184,7 @@ if ui_token:
     except urllib.error.HTTPError as e:
         s_noauth = e.code
     check("T11 /api/config with wrong UI token -> 401", s_noauth == 401, f"HTTP {s_noauth}")
-    check("T11 /api/config returns watchlist + mode, no token (UI-token protected, dashboard only)",
+    check("T11 /api/config returns watchlist + mode (selected — switched in setup), no token (UI-token protected, dashboard only)",
           s == 200 and "secret_token" not in r and r.get("mode") == "selected"
           and len(r.get("watchlist", [])) == 2, f"HTTP {s} {r}")
     s, r = ui_call("POST", "/api/config/watchlist",
@@ -212,11 +228,12 @@ check("T12 fresh-DB server still serves the seeded two products",
       f"HTTP {s} {r}")
 
 # --- T14: buy modes (v5.3.0) — dashboard picks "selected" (watchlist +
-# --- price cap) or "any" (any product, any price). Ends back on
-# --- "selected" so the database is left in its default state. ---
+# --- price cap) or "any" (any product, any price). Mode is "selected"
+# --- on entry (switched in the setup block for T2/T3). Ends back on
+# --- "any" so the database is left in its default state (v5.4.3). ---
 if ui_token:
     s, r = call("GET", "/status")
-    check("T14 default mode is selected",
+    check("T14 mode on entry is selected (setup switch)",
           s == 200 and r.get("mode") == "selected", f"HTTP {s} {r}")
     s, r = ui_call("POST", "/api/config/mode", {"mode": "any"})
     check("T14 switch to any-product mode", s == 200 and r.get("mode") == "any",
@@ -278,6 +295,9 @@ if ui_token:
     check("T14 selected mode: unwatched TCIN ignored again",
           s == 200 and r.get("status") == "ignored" and r.get("reason") == "not_watched",
           f"HTTP {s} {r}")
+    s, r = ui_call("POST", "/api/config/mode", {"mode": "any"})
+    check("T14 leave the database in its default mode (any)",
+          s == 200 and r.get("mode") == "any", f"HTTP {s} {r}")
 
 # --- T15: /next-any (v5.4.0) — oldest pending alert for ANY product, so a
 # --- buyer tab on any target.com page can find it and open its page. ---
@@ -354,6 +374,11 @@ s, r = call("GET", "/next-any")
 check("T17 /next-any serves the alert with the real product URL",
       s == 200 and r.get("alert", {}).get("url") == "https://www.target.com/p/-/A-1011407490",
       f"HTTP {s} {r}")
+# Mode is "any" on entry (T14 leaves the default). Switch to "selected"
+# for the ignored-in-selected-mode check, then back to "any" at the end.
+s, r = ui_call("POST", "/api/config/mode", {"mode": "selected"})
+check("T17 switch to selected mode for the ignored check",
+      s == 200 and r.get("mode") == "selected", f"HTTP {s} {r}")
 s, r = call("POST", "/alert", {
     "source": "restockd-discord",
     "title": "Pokémon Trading Card Game: Mega Evolution Elite Trainer Box | Target",
@@ -382,9 +407,9 @@ s, r = call("POST", "/ack", {"alert_id": howl_id, "status": "failed", "reason": 
 check("T17 cleanup: watched howl alert acked", s == 200, f"HTTP {s} {r}")
 s, r = call("POST", "/ack", {"alert_id": any_id, "status": "failed", "reason": "cleanup"})
 check("T17 cleanup: any-mode howl alert acked", s == 200, f"HTTP {s} {r}")
-s, r = ui_call("POST", "/api/config/mode", {"mode": "selected"})
-check("T17 switch back to selected mode",
-      s == 200 and r.get("mode") == "selected", f"HTTP {s} {r}")
+s, r = ui_call("POST", "/api/config/mode", {"mode": "any"})
+check("T17 leave the database in its default mode (any)",
+      s == 200 and r.get("mode") == "any", f"HTTP {s} {r}")
 
 print()
 if FAILURES:

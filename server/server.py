@@ -14,7 +14,7 @@ The server binds to 127.0.0.1 only, and the browser only allows
 Discord and Target pages to call it, so a random website cannot
 trigger a purchase.
 
-Buy modes (dashboard):
+Buy modes (dashboard; DEFAULT is "any" since v5.4.3):
   selected — buy ONLY the watched products, at or under their max price.
   any      — buy ANY Target product that gets alerted, at ANY price.
 
@@ -81,7 +81,7 @@ STARTED_AT = time.time()
 # init_db() runs. There is no config file and no token: on first start
 # the server seeds the default watchlist and the default buy mode
 # ("selected") in alerts.db.
-BUY_MODE = "selected"  # "selected" | "any"
+BUY_MODE = "any"  # "selected" | "any" — default "any" since v5.4.3
 ALERT_TTL_SECONDS = DEFAULT_ALERT_TTL_SECONDS
 DEDUPE_WINDOW_SECONDS = DEFAULT_DEDUPE_WINDOW_SECONDS
 WATCHLIST = {}
@@ -139,7 +139,7 @@ def init_db():
         conn.execute("DELETE FROM meta WHERE key='secret_token'")
         # First start (or a database from before v5.3.0): seed the buy
         # mode, the timing defaults and the two watched products.
-        for key, default in (("buy_mode", "selected"),
+        for key, default in (("buy_mode", "any"),
                              ("dedupe_window_seconds", str(DEFAULT_DEDUPE_WINDOW_SECONDS)),
                              ("alert_ttl_seconds", str(DEFAULT_ALERT_TTL_SECONDS))):
             conn.execute(
@@ -160,9 +160,9 @@ def refresh_settings():
     global BUY_MODE, ALERT_TTL_SECONDS, DEDUPE_WINDOW_SECONDS
     with get_db() as conn:
         meta = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM meta")}
-    BUY_MODE = meta.get("buy_mode", "selected")
+    BUY_MODE = meta.get("buy_mode", "any")
     if BUY_MODE not in ("selected", "any"):
-        BUY_MODE = "selected"
+        BUY_MODE = "any"
     ALERT_TTL_SECONDS = int(meta.get("alert_ttl_seconds", DEFAULT_ALERT_TTL_SECONDS))
     DEDUPE_WINDOW_SECONDS = int(meta.get("dedupe_window_seconds", DEFAULT_DEDUPE_WINDOW_SECONDS))
 
@@ -283,7 +283,7 @@ class ModeIn(BaseModel):
     mode: str = Field(pattern="^(selected|any)$")
 
 # ---------------------------------------------------------------- app
-app = FastAPI(title="Target Discord-Alert Server v5", version="5.4.2")
+app = FastAPI(title="Target Discord-Alert Server v5", version="5.4.3")
 app.add_middleware(
     CORSMiddleware,
     # Only Discord and Target pages may call this server from a browser.
@@ -521,8 +521,8 @@ here — no need to edit any file.</p>
 
 <h2>What to buy</h2>
 <div class="card">
-<label><input type="radio" name="buy-mode" value="selected" checked> <b>Selected products only</b> — buy only the products listed below, at or under their max price.</label>
-<label><input type="radio" name="buy-mode" value="any"> <b>Any product, any price</b> — buy whatever product gets alerted, at whatever price it is. Use carefully: one alert = one purchase attempt.</label>
+<label><input type="radio" name="buy-mode" value="selected"> <b>Selected products only</b> — buy only the products listed below, at or under their max price.</label>
+<label><input type="radio" name="buy-mode" value="any" checked> <b>Any product, any price</b> — buy whatever product gets alerted, at whatever price it is. Use carefully: one alert = one purchase attempt.</label>
 <br><button onclick="setMode()">Save choice</button>
 <div class="msg" id="mode-msg"></div>
 <p class="muted" id="mode-note"></p></div>
@@ -545,21 +545,38 @@ async function api(path, opts) {
   return j;
 }
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+// v5.4.3: the page auto-refreshes every 10 s (loadAll, below). A refresh
+// must NOT wipe a choice the user picked but has not saved yet — that was
+// the "any product never sticks" bug: click "Any product", take more than
+// 10 s to press Save, the tick silently flipped the radio back to the
+// server's current mode, and Save then saved the OLD mode. Track what the
+// user touched; loadAll skips those fields until the save succeeds.
+var modeDirty = false, settingsDirty = false;
+document.querySelectorAll('input[name="buy-mode"]').forEach(function (r) {
+  r.addEventListener('change', function () { modeDirty = true; });
+});
+['set-dedupe', 'set-ttl'].forEach(function (id) {
+  document.getElementById(id).addEventListener('input', function () { settingsDirty = true; });
+});
 async function loadAll(){
   try{
     const st = await api("/status");
     document.getElementById("status").innerHTML = '<span class="ok">Running</span> — ' + st.pending + ' alert(s) waiting';
     document.getElementById("uptime").textContent = "Up for " + Math.floor(st.uptime_seconds/60) + " minute(s).";
     const cfg = await api("/api/config");
-    document.querySelector('input[name="buy-mode"][value="' + (cfg.mode || "selected") + '"]').checked = true;
-    document.getElementById("mode-note").textContent = cfg.mode === "any"
-      ? "Any-product mode is ON — the list below is ignored, every Target alert will be queued."
-      : "Selected-products mode — only the products below will be bought, at or under their max price.";
-    document.getElementById("set-dedupe").value = Math.round(cfg.dedupe_window_seconds/60);
-    document.getElementById("set-ttl").value = Math.round(cfg.alert_ttl_seconds/60);
+    if (!modeDirty) {
+      document.querySelector('input[name="buy-mode"][value="' + (cfg.mode || "any") + '"]').checked = true;
+      document.getElementById("mode-note").textContent = cfg.mode === "any"
+        ? "Any-product mode is ON — the list below is ignored, every Target alert will be queued."
+        : "Selected-products mode — only the products below will be bought, at or under their max price.";
+    }
+    if (!settingsDirty) {
+      document.getElementById("set-dedupe").value = Math.round(cfg.dedupe_window_seconds/60);
+      document.getElementById("set-ttl").value = Math.round(cfg.alert_ttl_seconds/60);
+    }
     document.getElementById("watchlist").innerHTML = cfg.watchlist.map(w =>
       "<tr><td>"+esc(w.name)+"</td><td>"+esc(w.tcin)+"</td><td>$"+esc(w.max_price)+"</td>" +
-      '<td><button class="danger" onclick="removeProduct(\''+esc(w.tcin)+'\')">Remove</button></td></tr>').join("") ||
+      '<td><button class="danger" data-tcin="'+esc(w.tcin)+'" onclick="removeProduct(this.dataset.tcin)">Remove</button></td></tr>').join("") ||
       '<tr><td colspan="4">No products watched — the bot will buy nothing. Add one above.</td></tr>';
     const al = await api("/alerts?limit=20");
     document.getElementById("alerts").innerHTML = al.alerts.map(a =>
@@ -589,16 +606,17 @@ async function saveSettings(){
       dedupe_window_seconds: parseInt(document.getElementById("set-dedupe").value,10)*60,
       alert_ttl_seconds: parseInt(document.getElementById("set-ttl").value,10)*60})});
     msg.innerHTML = '<span class="ok">Settings saved.</span>';
+    settingsDirty = false; loadAll();
   }catch(e){ msg.textContent = "Could not save: " + e.message; }
 }
 async function setMode(){
   const msg = document.getElementById("mode-msg");
   const mode = document.querySelector('input[name="buy-mode"]:checked').value;
-  if(mode === "any" && !confirm("Any-product mode buys WHATEVER product gets alerted, at ANY price. Are you sure?")) { loadAll(); return; }
+  if(mode === "any" && !confirm("Any-product mode buys WHATEVER product gets alerted, at ANY price. Are you sure?")) { modeDirty = false; loadAll(); return; }
   try{
     await api("/api/config/mode", {method: "POST", body: JSON.stringify({mode: mode})});
     msg.innerHTML = '<span class="ok">Saved.</span>';
-    loadAll();
+    modeDirty = false; loadAll();
   }catch(e){ msg.textContent = "Could not save: " + e.message; }
 }
 loadAll(); setInterval(loadAll, 10000);

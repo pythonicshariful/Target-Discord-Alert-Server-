@@ -1,12 +1,13 @@
 # Target Auto-Buy v5 — Setup Guide (for non-technical users)
 
-**Version:** 5.4.2 — 2026-11-24
+**Version:** 5.4.3 — 2026-11-24
 **Guide updated:** 2026-11-24 — rewritten step by step for non-technical
 users (Windows + Mac).
-**What changed in 5.4.2:** real Restockd messages link through a tracking
-redirect (`howl.link`) — the bot now opens the real product page instead, so
-it starts properly on a real alert. Also fixed the price/quantity reading
-from real messages.
+**What changed in 5.4.3:** the dashboard's Save buttons did nothing at all
+(a broken quote in the page's own code stopped the whole dashboard from
+running — so the mode always looked "selected" again after a refresh).
+Fixed, and the dashboard no longer resets your choice while you are still
+deciding. The default choice is now **Any product, any price**.
 **Status:** Built and harness-tested (see TESTS.md). A live purchase is NOT
 yet proven — that needs a real restock. No purchase is promised.
 
@@ -146,10 +147,10 @@ Open the dashboard at **http://127.0.0.1:5000/**. Everything about
   **Save choice**:
   - **Selected products only** — buy only the products in the list
     below, one item each, never above their max price.
-    (This is the default.)
   - **Any product, any price** — buy whatever product gets alerted, at
     whatever price it is. The list below is ignored. Use carefully:
     one alert = one purchase attempt, at any price.
+    (This is the default.)
 - **The two products already in the list:**
 
   | Product | TCIN | Max price |
